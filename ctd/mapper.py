@@ -276,8 +276,14 @@ class VocabMapper:
         # inputs up to fp32 for the matmul, then cast result back.
         compute_dtype = probs_K.dtype
         sparse_dtype = torch.float32 if compute_dtype in (torch.float16, torch.bfloat16) else compute_dtype
+        # Model output dim can exceed tokenizer.vocab_size (padded vocab, e.g.
+        # Qwen2.5 has 151643 tokens but lm_head outputs 152064). Mask any
+        # top-k indices that fall in the padded region — they have no mapping.
+        valid_mask = flat_idx < self.teacher_vocab_size
+        safe_idx = flat_idx.clamp(max=self.teacher_vocab_size - 1)
+        safe_probs = flat_probs.to(sparse_dtype) * valid_mask.to(sparse_dtype)
         dense_T = torch.zeros(B, self.teacher_vocab_size, device=device, dtype=sparse_dtype)
-        dense_T.scatter_add_(1, flat_idx, flat_probs.to(sparse_dtype))
+        dense_T.scatter_add_(1, safe_idx, safe_probs)
 
         # Project to student vocab.
         M = self.matrix.to(device).to(sparse_dtype)
