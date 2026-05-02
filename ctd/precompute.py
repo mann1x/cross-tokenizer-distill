@@ -81,38 +81,39 @@ def _full_teacher_forward(
 def _slice_kv_cache(past_key_values, end_pos: int):
     """Truncate a KV cache to keep only positions [0, end_pos).
 
-    Handles both the legacy tuple-of-tuples format and the modern
-    Cache class. end_pos is exclusive — passing 0 returns an empty
-    cache (or None).
+    Always returns a Cache-compatible object (DynamicCache when modern
+    transformers is available) or None for empty. Modern HF models
+    (Qwen2, Llama-3, etc.) only accept Cache instances on the input
+    side, not legacy tuples — so we normalise everything here.
+
+    end_pos is exclusive — passing 0 returns None.
     """
-    if past_key_values is None:
+    if past_key_values is None or end_pos == 0:
         return None
 
-    # Modern Cache class — has crop / get_seq_length methods.
-    # transformers >= 4.36 introduced DynamicCache.
-    if hasattr(past_key_values, "crop"):
-        # crop(max_length) keeps positions [0, max_length).
-        # We need a copy because crop mutates in-place.
-        from copy import deepcopy
-        sliced = deepcopy(past_key_values)
-        sliced.crop(end_pos)
-        return sliced
-
-    # Legacy tuple-of-tuples: ((K, V), (K, V), ...) per layer.
-    # K, V shape: [B, n_heads, seq, head_dim].
+    # Convert any input (legacy tuple OR Cache instance) to legacy form,
+    # slice, then convert back to DynamicCache.
     if isinstance(past_key_values, tuple):
-        if end_pos == 0:
-            return None
-        sliced = tuple(
-            (k[..., :end_pos, :].clone(), v[..., :end_pos, :].clone())
-            for (k, v) in past_key_values
+        legacy = past_key_values
+    elif hasattr(past_key_values, "to_legacy_cache"):
+        legacy = past_key_values.to_legacy_cache()
+    else:
+        raise TypeError(
+            f"Unsupported KV cache type: {type(past_key_values)}. "
+            f"Need legacy tuple or HF Cache subclass with to_legacy_cache()."
         )
-        return sliced
 
-    raise TypeError(
-        f"Unsupported KV cache type: {type(past_key_values)}. "
-        f"Need legacy tuple format or HF Cache subclass with .crop()."
+    sliced_legacy = tuple(
+        (k[..., :end_pos, :].clone(), v[..., :end_pos, :].clone())
+        for (k, v) in legacy
     )
+
+    # Convert back to a Cache-compatible object if available.
+    try:
+        from transformers import DynamicCache
+        return DynamicCache.from_legacy_cache(sliced_legacy)
+    except ImportError:
+        return sliced_legacy
 
 
 @torch.no_grad()
