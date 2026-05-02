@@ -237,9 +237,13 @@ class VocabMapper:
         """
         leading = teacher_dist.shape[:-1]
         flat = teacher_dist.reshape(-1, self.teacher_vocab_size)
-        M = self.matrix.to(flat.device).to(flat.dtype)
-        out = torch.sparse.mm(M, flat.T).T  # [B, V_s]
-        return out.reshape(*leading, self.student_vocab_size)
+        # Sparse mm needs fp32 on CUDA — promote bf16/fp16 inputs.
+        in_dtype = flat.dtype
+        sparse_dtype = torch.float32 if in_dtype in (torch.float16, torch.bfloat16) else in_dtype
+        flat32 = flat.to(sparse_dtype)
+        M = self.matrix.to(flat.device).to(sparse_dtype)
+        out = torch.sparse.mm(M, flat32.T).T  # [B, V_s]
+        return out.to(in_dtype).reshape(*leading, self.student_vocab_size)
 
     def project_topk(
         self,
@@ -268,12 +272,16 @@ class VocabMapper:
         B = flat_probs.shape[0]
 
         # Build a dense teacher distribution from top-K (zero elsewhere).
-        dense_T = torch.zeros(B, self.teacher_vocab_size, device=device, dtype=probs_K.dtype)
-        dense_T.scatter_add_(1, flat_idx, flat_probs)
+        # torch.sparse.mm on CUDA only supports float32/float64 — cast bf16/fp16
+        # inputs up to fp32 for the matmul, then cast result back.
+        compute_dtype = probs_K.dtype
+        sparse_dtype = torch.float32 if compute_dtype in (torch.float16, torch.bfloat16) else compute_dtype
+        dense_T = torch.zeros(B, self.teacher_vocab_size, device=device, dtype=sparse_dtype)
+        dense_T.scatter_add_(1, flat_idx, flat_probs.to(sparse_dtype))
 
         # Project to student vocab.
-        M = self.matrix.to(device).to(dense_T.dtype)
-        dense_S = torch.sparse.mm(M, dense_T.T).T  # [B, V_s]
+        M = self.matrix.to(device).to(sparse_dtype)
+        dense_S = torch.sparse.mm(M, dense_T.T).T  # [B, V_s], fp32
 
         # Take top-K' on the student side.
         topk_vals, topk_ids = dense_S.topk(out_topk, dim=-1)
