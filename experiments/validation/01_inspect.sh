@@ -12,9 +12,9 @@ set -uo pipefail
 cd "$(dirname "$0")"
 mkdir -p results
 
-STUDENT="Qwen/Qwen2.5-Coder-0.5B-Instruct"
-TEACHER_B="Qwen/Qwen2.5-Coder-7B-Instruct"
-TEACHER_C="deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct"
+STUDENT="deepseek-ai/deepseek-coder-1.3b-instruct"
+TEACHER_B="deepseek-ai/deepseek-coder-6.7b-instruct"
+TEACHER_C="Qwen/Qwen2.5-Coder-7B-Instruct"
 
 echo "================================================================"
 echo "[01-inspect] Pair B (same-vocab) coverage report"
@@ -33,7 +33,6 @@ python -m cli.inspect \
     --teacher-tokenizer "$TEACHER_C" \
     --student-tokenizer "$STUDENT" \
     --strategies strict,distribute,first_token \
-    --trust-remote-code \
     2>&1 | tee results/01_inspect_C.log
 
 echo

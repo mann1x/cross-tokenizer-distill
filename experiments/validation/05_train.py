@@ -87,7 +87,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-name", required=True, choices=["A", "B", "C"])
     parser.add_argument("--corpus", default="data/corpus_5k.jsonl")
-    parser.add_argument("--student", default="Qwen/Qwen2.5-Coder-0.5B-Instruct")
+    parser.add_argument("--student", default="deepseek-ai/deepseek-coder-1.3b-instruct")
     parser.add_argument("--cache", default=None,
                         help="Path to teacher cache .pt — required for B and C, omitted for A.")
     parser.add_argument("--output-dir", default=None)

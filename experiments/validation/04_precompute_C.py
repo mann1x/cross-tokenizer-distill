@@ -24,9 +24,9 @@ from ctd.precompute import precompute_aligned_cache
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--corpus", default="data/corpus_5k.jsonl")
-    parser.add_argument("--output", default="cache_C/dscoder_v2_lite_via_ctd_top32.pt")
-    parser.add_argument("--teacher", default="deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct")
-    parser.add_argument("--student-tokenizer", default="Qwen/Qwen2.5-Coder-0.5B-Instruct")
+    parser.add_argument("--output", default="cache_C/qwen25_coder_7b_via_ctd_top32.pt")
+    parser.add_argument("--teacher", default="Qwen/Qwen2.5-Coder-7B-Instruct")
+    parser.add_argument("--student-tokenizer", default="deepseek-ai/deepseek-coder-1.3b-instruct")
     parser.add_argument("--top-k", type=int, default=32)
     parser.add_argument("--max-seq-len", type=int, default=1024)
     parser.add_argument("--multi-token", default="distribute",

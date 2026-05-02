@@ -112,7 +112,7 @@ def run_mbpp(model, tokenizer, limit: Optional[int] = None) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base-model", default="Qwen/Qwen2.5-Coder-0.5B-Instruct")
+    parser.add_argument("--base-model", default="deepseek-ai/deepseek-coder-1.3b-instruct")
     parser.add_argument("--adapter", required=True, help="Path to LoRA adapter dir.")
     parser.add_argument("--output", required=True, help="JSON output path.")
     parser.add_argument("--he-limit", type=int, default=164)

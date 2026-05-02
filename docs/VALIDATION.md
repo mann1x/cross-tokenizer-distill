@@ -21,29 +21,29 @@ comparable-quality teacher.
 A 3-way comparison on a single small student, varying ONLY the
 teacher / distillation method:
 
-| Run | Student | Teacher | Vocab | Method |
-|---|---|---|---|---|
-| **A** | Qwen2.5-Coder-0.5B | none | n/a | SFT only (no distill) |
-| **B** | Qwen2.5-Coder-0.5B | Qwen2.5-Coder-7B | same (152064) | KL distill (standard) |
-| **C** | Qwen2.5-Coder-0.5B | DeepSeek-Coder-V2-Lite-Instruct | **different** (102400) | **CTD** |
+| Run | Student | Teacher | Vocab | HE pass@1 | Method |
+|---|---|---|---|---|---|
+| **A** | deepseek-coder-1.3b-instruct | none | n/a | (baseline ~65%) | SFT only (no distill) |
+| **B** | deepseek-coder-1.3b-instruct | deepseek-coder-6.7b-instruct | same (32256) | ~78% | KL distill (standard) |
+| **C** | deepseek-coder-1.3b-instruct | Qwen2.5-Coder-7B-Instruct | **different** (152064) | **~88%** | **CTD** |
 
-Why these specific models:
+Why this design (Plan 1, mirrors Mythic-RDT v6U):
 
-- **Student Qwen2.5-Coder-0.5B**: small, common, well-documented
-  baseline; trains in ~1-2h on a 3090 with LoRA.
-- **Teacher B Qwen2.5-Coder-7B**: same family, larger, ~88% HE+
-  pass@1 — strong same-vocab teacher with comfortable headroom over
-  the 0.5B student.
-- **Teacher C DeepSeek-Coder-V2-Lite-Instruct**: different vocab
-  family entirely, ~81% HE+, comparable-quality teacher to (B). We
-  intentionally pick a teacher that's NOT obviously stronger than B
-  so quality differences in the student aren't confounded by teacher
-  capability.
-
-A teacher pair where C is clearly weaker than B would let us
-mistake "CTD works" for "the weak teacher caps quality". Picking
-B≈C in raw capability isolates the vocab gap as the only
-independent variable.
+- **Direction matches v6U**: small student in family A learns from big
+  teacher in family B via CTD. Student vocab is the small DeepSeek
+  vocab (32K); teacher vocab is the large Qwen vocab (152K) — same
+  projection direction we'll use in production.
+- **Teacher C is intentionally STRONGER than B**: this is the key
+  design choice. v6U's whole point is that the strongest available
+  teacher (Qwen3-Coder-Next 80B-A3B) is cross-vocab. If CTD recovers
+  the cross-vocab gain despite the projection loss, that's strong
+  evidence the library works for the v6U use case. C ≥ B → unambiguous
+  win; A < C < B → still a win if ratio (C-A)/(B-A) ≥ 0.8.
+- **All three models are dense, well-validated** on HE+/MBPP+. No
+  MoE quirks, no architecture surprises.
+- **Cleanly fit on a single 24GB GPU**: 1.3B student trains in <12GB
+  with LoRA; 6.7B teacher precompute fits in BF16; 7B Qwen teacher
+  fits in BF16 or NF4.
 
 ## Training corpus
 
@@ -79,8 +79,8 @@ flash_attention_2.
 
 | Phase | Hardware | Wall-clock | Cost |
 |---|---|---|---|
-| Cache precompute (B): Qwen2.5-Coder-7B over 5K samples × 1024 tokens | 1×3090 24GB (NF4) | ~3h | $0 (local) |
-| Cache precompute (C): DeepSeek-Coder-V2-Lite over same corpus, projected to Qwen2.5 vocab via CTD | 1×3090 24GB (NF4) | ~4h (incl. suffix re-encode overhead) | $0 (local) |
+| Cache precompute (B): deepseek-coder-6.7b over 5K samples × 1024 tokens | 1×3090 24GB (BF16/NF4) | ~3h | $0 (local) |
+| Cache precompute (C): Qwen2.5-Coder-7B over same corpus, projected to DS-Coder-V1 vocab via CTD | 1×3090 24GB (BF16/NF4) | ~4h (incl. suffix re-encode overhead) | $0 (local) |
 | Run A (SFT) | 1×3090 | ~1.5h | $0 |
 | Run B (same-vocab distill) | 1×3090 | ~2h | $0 |
 | Run C (CTD distill) | 1×3090 | ~2h | $0 |
