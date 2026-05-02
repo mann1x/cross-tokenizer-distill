@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cross-tokenizer-distill"
+version = "0.0.1"
+description = "Knowledge distillation across different tokenizer vocabularies."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Mythic-RDT contributors" }]
+keywords = ["distillation", "knowledge-distillation", "tokenizer", "transformers", "llm"]
+
+dependencies = [
+    "torch>=2.3",
+    "transformers>=4.46",
+    "tokenizers>=0.20",
+    "tqdm",
+    "numpy",
+    "scipy",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff", "mypy"]
+hf = ["datasets>=2.14", "accelerate>=0.30"]
+
+[project.scripts]
+ctd-inspect = "ctd.cli.inspect:main"
+ctd-precompute = "ctd.cli.precompute:main"
+ctd-benchmark = "ctd.cli.benchmark:main"
+
+[tool.setuptools.packages.find]
+include = ["ctd*", "adapters*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
