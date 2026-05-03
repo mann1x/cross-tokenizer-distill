@@ -33,9 +33,22 @@ def strip_markdown_fences(s: str) -> str:
     return s
 
 
+_HE_STOPS = ("\nclass ", "\ndef ", "\n#", "\nif __name__", "\nprint(", "\nassert ")
+
+
+def truncate_at_function_end(s: str) -> str:
+    """Keep only the function body — cut at the first top-level non-continuation."""
+    earliest = len(s)
+    for stop in _HE_STOPS:
+        i = s.find(stop)
+        if i != -1 and i < earliest:
+            earliest = i
+    return s[:earliest]
+
+
 def score_humaneval(prob: dict, generation: str) -> tuple[bool, str]:
     """Run exec(prompt + generation + test). Return (passed, info)."""
-    code = strip_markdown_fences(generation)
+    code = truncate_at_function_end(strip_markdown_fences(generation))
     full = prob["prompt"] + code + "\n" + prob["test"] + f"\ncheck({prob['entry_point']})\n"
     buf_o, buf_e = StringIO(), StringIO()
     try:
@@ -48,7 +61,7 @@ def score_humaneval(prob: dict, generation: str) -> tuple[bool, str]:
 
 
 def score_mbpp(prob: dict, generation: str) -> tuple[bool, str]:
-    code = strip_markdown_fences(generation)
+    code = truncate_at_function_end(strip_markdown_fences(generation))
     test_list = prob.get("test_list", [])
     full = code + "\n" + "\n".join(test_list)
     try:
