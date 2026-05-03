@@ -27,9 +27,10 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 def strip_markdown_fences(s: str) -> str:
-    """Remove leading ```python / trailing ``` fences."""
-    s = re.sub(r"^```(?:python|py)?\n", "", s.strip())
-    s = re.sub(r"\n```$", "", s)
+    """Remove ``` fences but PRESERVE leading whitespace (function indent)."""
+    # Only strip a leading fence if it's at the very start (allowing newline).
+    s = re.sub(r"\A\s*```(?:python|py)?\n", "", s)
+    s = re.sub(r"\n```\s*\Z", "", s)
     return s
 
 
