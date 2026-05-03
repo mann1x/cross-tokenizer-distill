@@ -165,6 +165,12 @@ class VocabMapper:
             if not s_ids:
                 dropped_count += 1
                 continue
+            # tokenizer.encode may emit IDs >= tokenizer.vocab_size for added /
+            # special tokens; drop those (no row in the V_student-sized matrix).
+            s_ids = [i for i in s_ids if 0 <= i < v_s]
+            if not s_ids:
+                dropped_count += 1
+                continue
 
             if len(s_ids) == 1:
                 rows.append(s_ids[0])
