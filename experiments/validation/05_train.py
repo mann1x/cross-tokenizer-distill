@@ -92,6 +92,8 @@ def main() -> int:
                         help="Path to teacher cache .pt — required for B and C, omitted for A.")
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--ctd-weight", type=float, default=0.5)
+    parser.add_argument("--kl-temperature", type=float, default=1.0)
+    parser.add_argument("--ctd-kind", default="kl", choices=["kl", "jsd", "uld_sorted_kl"])
     parser.add_argument("--lora-rank", type=int, default=16)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--epochs", type=int, default=2)
@@ -164,7 +166,7 @@ def main() -> int:
     )
 
     if cache is not None:
-        ctd_loss = CTDLoss(kind="kl", temperature=1.0)
+        ctd_loss = CTDLoss(kind=args.ctd_kind, temperature=args.kl_temperature)
         trainer = CTDTrainer(
             ctd_cache=cache,
             ctd_loss=ctd_loss,
