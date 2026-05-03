@@ -107,14 +107,18 @@ def run_humaneval(model, tokenizer, limit: Optional[int] = None) -> dict:
     n_pass = 0
     failures = []
     for i, prob in enumerate(ds):
-        gen = generate_one(model, tokenizer, prob["prompt"])
-        passed, info = score_humaneval(prob, gen)
+        try:
+            gen = generate_one(model, tokenizer, prob["prompt"])
+            passed, info = score_humaneval(prob, gen)
+        except Exception as e:
+            passed, info = False, f"GenError: {type(e).__name__}: {str(e)[:80]}"
+            print(f"  HE {i}/{len(ds)} GENERATION ERROR on {prob['task_id']}: {info}", flush=True)
         if passed:
             n_pass += 1
         else:
             failures.append({"task_id": prob["task_id"], "info": info})
         if (i + 1) % 10 == 0:
-            print(f"  HE {i+1}/{len(ds)}  pass@1={n_pass}/{i+1}={n_pass/(i+1):.1%}")
+            print(f"  HE {i+1}/{len(ds)}  pass@1={n_pass}/{i+1}={n_pass/(i+1):.1%}", flush=True)
     return {"n_total": len(ds), "n_pass": n_pass, "pass@1": n_pass / len(ds), "failures": failures}
 
 
@@ -136,14 +140,18 @@ def run_mbpp(model, tokenizer, limit: Optional[int] = None) -> dict:
     failures = []
     for i, prob in enumerate(ds):
         prompt = _mbpp_prompt(prob)
-        gen = generate_one(model, tokenizer, prompt)
-        passed, info = score_mbpp(prob, gen)
+        try:
+            gen = generate_one(model, tokenizer, prompt)
+            passed, info = score_mbpp(prob, gen)
+        except Exception as e:
+            passed, info = False, f"GenError: {type(e).__name__}: {str(e)[:80]}"
+            print(f"  MBPP {i}/{len(ds)} GENERATION ERROR: {info}", flush=True)
         if passed:
             n_pass += 1
         else:
             failures.append({"task_id": prob.get("task_id", i), "info": info})
         if (i + 1) % 20 == 0:
-            print(f"  MBPP {i+1}/{len(ds)}  pass@1={n_pass}/{i+1}={n_pass/(i+1):.1%}")
+            print(f"  MBPP {i+1}/{len(ds)}  pass@1={n_pass}/{i+1}={n_pass/(i+1):.1%}", flush=True)
     return {"n_total": len(ds), "n_pass": n_pass, "pass@1": n_pass / len(ds), "failures": failures}
 
 
