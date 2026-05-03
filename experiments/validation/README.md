@@ -77,6 +77,76 @@ each `exec()` under `SIGALRM`; on expiry the problem is recorded as a
 `Timeout: …` failure and the loop continues. Mirrors the EvalPlus
 default for MBPP+ extended tests.
 
+## `precompute_remote.py` — teacher cache via remote/hosted backends
+
+Build the same top-K teacher cache that `03_precompute_B.py` /
+`04_precompute_C.py` produce, but against a **remote** teacher rather
+than one loaded into local VRAM. Useful for two cases:
+
+1. **Free experimentation against a local-LAN Ollama** (e.g.
+   `gemma4:e2b` on solidpc) — no GPU rental, no model download.
+2. **Production-scale precompute against a massive teacher** via
+   Together.AI / Fireworks / DeepInfra — one HTTP call per example
+   (`echo: true` + `logprobs: K`), no need to rent a GPU pod that
+   can hold the full teacher.
+
+Cache schema is byte-identical to `ctd.precompute` output, so trainers
+need no changes (just point `--cache` at the new file).
+
+### Provider matrix
+
+| Provider     | Echo / forced-decode | Top-K cap | API key env       |
+|--------------|----------------------|-----------|-------------------|
+| `ollama`     | ✗ (one call per token) | 20      | —                 |
+| `together`   | ✓ (`echo: true`)     | 20        | `TOGETHER_API_KEY` |
+| `fireworks`  | ✓ (`echo: true`)     | 20        | `FIREWORKS_API_KEY` |
+| `deepinfra`  | ✓ (`echo: true`)     | 5–20      | `DEEPINFRA_API_KEY` |
+
+Ollama is the only one that lacks echo, so it pays one HTTP roundtrip
+per teacher token — practical only for small corpora or smoke tests.
+
+### Examples
+
+```bash
+# Free smoke against local Ollama on solidpc.
+python experiments/validation/precompute_remote.py \
+    --provider ollama --base-url http://solidpc:11433 \
+    --model-id gemma4:e2b \
+    --teacher-tokenizer google/gemma-2-2b \
+    --student-tokenizer deepseek-ai/deepseek-coder-1.3b-instruct \
+    --corpus data/mini_corpus.jsonl \
+    --output cache/ollama_gemma4_e2b.pt \
+    --top-k 20
+
+# Full corpus against Qwen3-Coder-480B on Together.AI, projected to student vocab.
+TOGETHER_API_KEY=... python experiments/validation/precompute_remote.py \
+    --provider together \
+    --model-id Qwen/Qwen3-Coder-480B \
+    --teacher-tokenizer Qwen/Qwen3-Coder \
+    --student-tokenizer deepseek-ai/deepseek-coder-1.3b-instruct \
+    --corpus data/corpus_5k.jsonl \
+    --output cache/together_qwen3_coder_480b.pt \
+    --top-k 20 --project-at-write-time
+```
+
+### Caveats
+
+- **Tokenizer must match the remote model's vocab.** `--teacher-tokenizer`
+  loads an HF tokenizer locally; we re-resolve API-returned token strings
+  to teacher vocab IDs through it. If the local tokenizer drifts from the
+  remote (different special tokens, different merges), some top-K entries
+  silently drop — you'll see lower `n_aligned_tokens` in the meta JSON.
+- **Top-K capped at 20 across all four providers.** CTD default K=32 is
+  not reachable; degrades distill tail mass slightly but isn't a quality
+  blocker (most distill papers use K≤16).
+- **Cloud-tagged Ollama models (`:cloud` suffix) do NOT return logprobs.**
+  Confirmed against `qwen3-coder:480b-cloud`. The cloud backend strips
+  the `logprobs` field entirely. Use a hosted provider with echo for that
+  use case.
+- **No suffix-reencode optimization.** Remote teachers can't expose KV
+  cache for the partial-token suffix trick the local precompute uses;
+  off by default in the remote driver.
+
 ### Per-problem progress logging
 
 Every problem prints a single line:
