@@ -34,14 +34,27 @@ def strip_markdown_fences(s: str) -> str:
     return s
 
 
-_HE_STOPS = ("\nclass ", "\ndef ", "\n#", "\nif __name__", "\nprint(", "\nassert ")
+_HE_STOPS = ("\nclass ", "\ndef ", "\n#", "\nif __name__", "\nprint(", "\nassert ", "\n```")
 
 
 def truncate_at_function_end(s: str) -> str:
-    """Keep only the function body — cut at the first top-level non-continuation."""
+    """Keep the (possibly leading) def + body — cut at next top-level marker.
+
+    We allow the generation to optionally start with `def ` / `class `
+    (MBPP-style) and only cut on the SECOND occurrence; HE-style (no
+    leading def) cuts on the first."""
+    # Skip past a leading def/class line if present.
+    start = 0
+    stripped = s.lstrip("\n ")
+    if stripped.startswith(("def ", "class ")):
+        # Position right after the leading def line — find first newline after it.
+        leading_offset = len(s) - len(stripped)
+        nl = s.find("\n", leading_offset)
+        start = nl + 1 if nl != -1 else len(s)
+
     earliest = len(s)
     for stop in _HE_STOPS:
-        i = s.find(stop)
+        i = s.find(stop, start)
         if i != -1 and i < earliest:
             earliest = i
     return s[:earliest]
