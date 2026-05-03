@@ -228,6 +228,36 @@ class VocabMapper:
             strategy=multi_token,
         )
 
+    def _build_teacher_lut(self) -> None:
+        """Group sparse matrix by teacher column for fast per-token projection."""
+        m = self.matrix.coalesce()
+        rows = m.indices()[0].cpu()
+        cols = m.indices()[1].cpu()
+        vals = m.values().to(torch.float32).cpu()
+        self._t2s_rows: list[torch.Tensor] = [
+            torch.empty(0, dtype=torch.long) for _ in range(self.teacher_vocab_size)
+        ]
+        self._t2s_vals: list[torch.Tensor] = [
+            torch.empty(0, dtype=torch.float32) for _ in range(self.teacher_vocab_size)
+        ]
+        # Sort by col so we can slice contiguously.
+        order = cols.argsort()
+        cols_s = cols[order]
+        rows_s = rows[order]
+        vals_s = vals[order]
+        # Boundaries between distinct teacher ids.
+        change = torch.cat([
+            torch.tensor([0]),
+            (cols_s[1:] != cols_s[:-1]).nonzero(as_tuple=True)[0] + 1,
+            torch.tensor([cols_s.numel()]),
+        ])
+        for i in range(change.numel() - 1):
+            a, b = int(change[i]), int(change[i + 1])
+            tid = int(cols_s[a])
+            if 0 <= tid < self.teacher_vocab_size:
+                self._t2s_rows[tid] = rows_s[a:b].clone()
+                self._t2s_vals[tid] = vals_s[a:b].clone()
+
     def coverage_report(self) -> CoverageReport:
         return self._report
 
@@ -288,17 +318,25 @@ class VocabMapper:
         valid_mask = flat_idx < self.teacher_vocab_size
         safe_idx = flat_idx.clamp(max=self.teacher_vocab_size - 1)
         safe_probs = flat_probs.to(sparse_dtype) * valid_mask.to(sparse_dtype)
-        # CUDA sparse_coo @ dense via torch.sparse.mm has triggered illegal
-        # memory access intermittently on real workloads — do projection on
-        # CPU. dense_T is at most a few MB; H2D/D2H is dominated by the
-        # teacher forward.
+        # Lookup-based projection: teacher top-K has only K nonzeros, so
+        # full sparse mm is wasteful (and CUDA sparse_coo mm has been
+        # observed to corrupt memory). Precompute teacher_id -> (rows,
+        # weights) once, then fan out K small scatters per token.
+        if not hasattr(self, "_t2s_rows"):
+            self._build_teacher_lut()
         safe_idx_cpu = safe_idx.cpu()
         safe_probs_cpu = safe_probs.to(torch.float32).cpu()
-        dense_T_cpu = torch.zeros(B, self.teacher_vocab_size, dtype=torch.float32)
-        dense_T_cpu.scatter_add_(1, safe_idx_cpu, safe_probs_cpu)
-        if not hasattr(self, "_matrix_cpu_f32"):
-            self._matrix_cpu_f32 = self.matrix.to(torch.float32).cpu().coalesce()
-        dense_S_cpu = torch.sparse.mm(self._matrix_cpu_f32, dense_T_cpu.T).T  # [B, V_s]
+        dense_S_cpu = torch.zeros(B, self.student_vocab_size, dtype=torch.float32)
+        for b in range(B):
+            for k in range(K):
+                p = float(safe_probs_cpu[b, k])
+                if p == 0.0:
+                    continue
+                tid = int(safe_idx_cpu[b, k])
+                rows = self._t2s_rows[tid]
+                if rows.numel() == 0:
+                    continue
+                dense_S_cpu[b].index_add_(0, rows, self._t2s_vals[tid] * p)
         dense_S = dense_S_cpu.to(device).to(sparse_dtype)
 
         # Take top-K' on the student side.
