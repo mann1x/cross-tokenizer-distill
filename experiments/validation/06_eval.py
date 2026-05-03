@@ -105,6 +105,16 @@ def run_humaneval(model, tokenizer, limit: Optional[int] = None) -> dict:
     return {"n_total": len(ds), "n_pass": n_pass, "pass@1": n_pass / len(ds), "failures": failures}
 
 
+def _mbpp_prompt(prob: dict) -> str:
+    """Standard MBPP prompt: description + tests anchor the function name."""
+    desc = prob.get("prompt") or prob.get("text") or ""
+    tests = prob.get("test_list", [])
+    test_str = "\n".join(tests[:3])
+    return (
+        f'"""\n{desc}\n{test_str}\n"""\n'
+    )
+
+
 def run_mbpp(model, tokenizer, limit: Optional[int] = None) -> dict:
     ds = load_dataset("evalplus/mbppplus", split="test")
     if limit:
@@ -112,8 +122,8 @@ def run_mbpp(model, tokenizer, limit: Optional[int] = None) -> dict:
     n_pass = 0
     failures = []
     for i, prob in enumerate(ds):
-        prompt = prob.get("prompt") or prob["text"]
-        gen = generate_one(model, tokenizer, prompt + "\n")
+        prompt = _mbpp_prompt(prob)
+        gen = generate_one(model, tokenizer, prompt)
         passed, info = score_mbpp(prob, gen)
         if passed:
             n_pass += 1
