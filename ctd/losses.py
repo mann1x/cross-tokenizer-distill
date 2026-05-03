@@ -80,37 +80,46 @@ class CTDLoss:
             )
 
         # Standard top-K projected losses (kl / jsd / mse).
-        # Gather student log-probs at the teacher's top-K student-vocab indices.
-        student_log_probs = (student_logits / self.temperature).log_softmax(dim=-1)
+        # Hinton-style soft targets: BOTH student and teacher distributions
+        # are softened at temperature T, and the resulting KL is multiplied
+        # by T² to keep gradient magnitude comparable to the unsoftened CE
+        # term (so changing T shifts the loss surface, not its scale).
+        T = self.temperature
+        student_log_probs = (student_logits / T).log_softmax(dim=-1)
         # student_log_probs: [B, L, V_S]; gather at indices [B, L, K] → [B, L, K]
         student_topk_log = student_log_probs.gather(-1, teacher_topk_indices)
 
-        teacher_topk_probs = teacher_topk_log_values.exp()  # [B, L, K]
+        # Teacher cache stores log-softmax over top-K at T=1. Treating those
+        # log-probs as proxy logits, re-soften over the top-K support at T:
+        #   softmax(z_t / T) ∝ softmax(log P_t / T)   (within top-K)
+        teacher_topk_log_T = (teacher_topk_log_values / T).log_softmax(dim=-1)
+        teacher_topk_probs_T = teacher_topk_log_T.exp()  # [B, L, K]
 
         if self.kind == "kl":
-            # KL(P_T || P_S) on the top-K support, renormalised teacher.
-            # = sum_k p_T[k] * (log p_T[k] - log p_S[k])
+            # KL(P_T || P_S) on the top-K support.
             per_pos = (
-                teacher_topk_probs * (teacher_topk_log_values - student_topk_log)
+                teacher_topk_probs_T * (teacher_topk_log_T - student_topk_log)
             ).sum(dim=-1)  # [B, L]
 
         elif self.kind == "jsd":
             # JSD on the top-K support: 0.5 * (KL(P || M) + KL(Q || M))
-            # where M = 0.5 * (P + Q) — both restricted to the top-K student indices.
             student_topk_probs = student_topk_log.exp()
-            mid = 0.5 * (teacher_topk_probs + student_topk_probs).clamp(min=self.eps)
+            mid = 0.5 * (teacher_topk_probs_T + student_topk_probs).clamp(min=self.eps)
             mid_log = mid.log()
-            kl_pm = (teacher_topk_probs * (teacher_topk_log_values - mid_log)).sum(-1)
+            kl_pm = (teacher_topk_probs_T * (teacher_topk_log_T - mid_log)).sum(-1)
             kl_qm = (student_topk_probs * (student_topk_log - mid_log)).sum(-1)
             per_pos = 0.5 * (kl_pm + kl_qm)
 
         elif self.kind == "mse":
-            # MSE on the top-K probabilities.
+            # MSE on the (re-softened) top-K probabilities.
             student_topk_probs = student_topk_log.exp()
-            per_pos = ((teacher_topk_probs - student_topk_probs) ** 2).sum(-1)
+            per_pos = ((teacher_topk_probs_T - student_topk_probs) ** 2).sum(-1)
 
         else:
             raise AssertionError(f"unreachable: {self.kind}")
+
+        # T² rescale to keep gradient magnitude scale-invariant in T.
+        per_pos = per_pos * (T ** 2)
 
         # Mask invalid positions and average.
         if alignment_mask is None:
@@ -132,16 +141,17 @@ class CTDLoss:
         the matching ranks. No vocab projection needed — operates on
         rank-aligned probability mass.
         """
+        T = self.temperature
         K = teacher_topk_log_values.shape[-1]
-        student_log_probs = (student_logits / self.temperature).log_softmax(dim=-1)
+        student_log_probs = (student_logits / T).log_softmax(dim=-1)
         student_top_log, _ = student_log_probs.topk(K, dim=-1)
-        # Renormalise both top-K supports.
+        # Renormalise both top-K supports; soften teacher at T (proxy logits).
         student_top_log = student_top_log - student_top_log.logsumexp(dim=-1, keepdim=True)
-        teacher_top_log = teacher_topk_log_values - teacher_topk_log_values.logsumexp(
-            dim=-1, keepdim=True
-        )
+        teacher_top_log = (teacher_topk_log_values / T).log_softmax(dim=-1)
         teacher_top_probs = teacher_top_log.exp()
         per_pos = (teacher_top_probs * (teacher_top_log - student_top_log)).sum(dim=-1)
+        # T² rescale (Hinton).
+        per_pos = per_pos * (T ** 2)
 
         if alignment_mask is None:
             return per_pos.mean()

@@ -92,6 +92,9 @@ def main() -> int:
                         help="Path to teacher cache .pt — required for B and C, omitted for A.")
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--ctd-weight", type=float, default=0.5)
+    parser.add_argument("--ctd-weight-warmup-steps", type=int, default=0,
+                        help="Linear ramp ctd_weight 0→target over N steps. "
+                             "Compensates for LoRA cold-start (lora_B inits to 0).")
     parser.add_argument("--kl-temperature", type=float, default=1.0)
     parser.add_argument("--ctd-kind", default="kl", choices=["kl", "jsd", "uld_sorted_kl"])
     parser.add_argument("--lora-rank", type=int, default=16)
@@ -171,6 +174,7 @@ def main() -> int:
             ctd_cache=cache,
             ctd_loss=ctd_loss,
             ctd_weight=args.ctd_weight,
+            ctd_weight_warmup_steps=args.ctd_weight_warmup_steps,
             **trainer_kwargs,
         )
     else:

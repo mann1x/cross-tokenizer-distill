@@ -43,6 +43,7 @@ class CTDTrainerMixin:
         ctd_cache: Optional[dict] = None,
         ctd_loss: Optional["CTDLoss"] = None,  # noqa: F821 (fwd ref)
         ctd_weight: float = 0.5,
+        ctd_weight_warmup_steps: int = 0,
         ctd_position_field: str = "ctd_positions",
         **kwargs,
     ):
@@ -50,10 +51,29 @@ class CTDTrainerMixin:
         self.ctd_cache = ctd_cache
         self.ctd_loss = ctd_loss
         self.ctd_weight = ctd_weight
+        self.ctd_weight_warmup_steps = max(0, int(ctd_weight_warmup_steps))
         self.ctd_position_field = ctd_position_field
 
         if (ctd_cache is not None) != (ctd_loss is not None):
             raise ValueError("Provide both ctd_cache and ctd_loss, or neither.")
+
+    def _effective_ctd_weight(self) -> float:
+        """Linear ramp 0 → ctd_weight over ctd_weight_warmup_steps.
+
+        Compensates for LoRA cold-start: lora_B inits to 0 so for the first
+        ~50-100 steps the model output is base-model-identical and distill
+        gradient just reshapes the adapter. Ramping the distill term lets
+        CE drive that warmup, then distill kicks in once the adapter has
+        non-zero output.
+        """
+        target = self.ctd_weight
+        warmup = self.ctd_weight_warmup_steps
+        if warmup <= 0:
+            return target
+        step = getattr(self.state, "global_step", 0) if hasattr(self, "state") else 0
+        if step >= warmup:
+            return target
+        return target * (step / warmup)
 
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
         """Compute hard-CE + ctd_weight * CTD-distill loss."""
@@ -95,7 +115,8 @@ class CTDTrainerMixin:
             alignment_mask=align_mask,
         )
 
-        total = (1.0 - self.ctd_weight) * ce_loss + self.ctd_weight * distill_loss
+        w = self._effective_ctd_weight()
+        total = (1.0 - w) * ce_loss + w * distill_loss
         # Stash for logging.
         outputs["ctd_distill_loss"] = distill_loss.detach()
         outputs["ctd_ce_loss"] = ce_loss.detach()
