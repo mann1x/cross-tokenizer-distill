@@ -282,12 +282,18 @@ class VocabMapper:
         valid_mask = flat_idx < self.teacher_vocab_size
         safe_idx = flat_idx.clamp(max=self.teacher_vocab_size - 1)
         safe_probs = flat_probs.to(sparse_dtype) * valid_mask.to(sparse_dtype)
-        dense_T = torch.zeros(B, self.teacher_vocab_size, device=device, dtype=sparse_dtype)
-        dense_T.scatter_add_(1, safe_idx, safe_probs)
-
-        # Project to student vocab.
-        M = self.matrix.to(device).to(sparse_dtype)
-        dense_S = torch.sparse.mm(M, dense_T.T).T  # [B, V_s], fp32
+        # CUDA sparse_coo @ dense via torch.sparse.mm has triggered illegal
+        # memory access intermittently on real workloads — do projection on
+        # CPU. dense_T is at most a few MB; H2D/D2H is dominated by the
+        # teacher forward.
+        safe_idx_cpu = safe_idx.cpu()
+        safe_probs_cpu = safe_probs.to(torch.float32).cpu()
+        dense_T_cpu = torch.zeros(B, self.teacher_vocab_size, dtype=torch.float32)
+        dense_T_cpu.scatter_add_(1, safe_idx_cpu, safe_probs_cpu)
+        if not hasattr(self, "_matrix_cpu_f32"):
+            self._matrix_cpu_f32 = self.matrix.to(torch.float32).cpu().coalesce()
+        dense_S_cpu = torch.sparse.mm(self._matrix_cpu_f32, dense_T_cpu.T).T  # [B, V_s]
+        dense_S = dense_S_cpu.to(device).to(sparse_dtype)
 
         # Take top-K' on the student side.
         topk_vals, topk_ids = dense_S.topk(out_topk, dim=-1)
