@@ -180,7 +180,7 @@ HumanEval-164 + MBPP-378 full sets):
 | M5 (same-vocab DistillSpec/FKL on-policy) | forward-KL distill | 56.1 % | −3.7 |
 | SFT (mbpp_train, same recipe as M3) | cross-entropy | 51.8 % | −8.0 |
 | ~~M6 first attempt~~ | ~~cross-vocab CTD~~ | ~~38.4~~ | **retracted (code bug — see RESULTS.md)** |
-| **M6b** (re-run with sample/train layout + multi_token strategy fixes) | CTD on-policy FKL | *queued* | *target ≥ 53 %* |
+| **M6b** (re-run with bug fixes + `multi_token=first_token`) | CTD on-policy FKL | **53.0** | **−6.8 (gate ≥ 53 ✓, < M3 by 2.5 pp)** |
 
 Headline finding from M3/M4/M5: **distillation regularises vs SFT by
 3.7–4.3 pp on HE at the same recipe** — the teacher signal stops the small

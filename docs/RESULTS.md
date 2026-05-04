@@ -115,7 +115,7 @@ identifiers. The eval failures (NameError on undefined symbols,
 IndentationError, TypeError "int not callable") match exactly that
 fragment-emission signature.
 
-**M6b** will re-run with all four fixes:
+**M6b** re-runs with all four fixes:
 
 1. Forward student on the same left-padded tensor used for sampling
    (mirror M5's structure exactly); keep teacher on its own re-tokenized
@@ -126,7 +126,46 @@ fragment-emission signature.
 4. Rebuild mapper with `multi_token=first_token` (puts teacher mass on a
    single coherent next-token target for multi-token entries).
 
-The v6U decision rule (`C vs A vs B`) cannot be evaluated until M6b lands.
+### M6b results (HE-164 final, MBPP partial)
+
+| Metric | Value | Δ vs base 59.8 | Δ vs M3 55.5 (same-vocab GKD) | Δ vs SFT 51.8 |
+|---|---|---|---|---|
+| HumanEval-164 pass@1 | **53.0 %** (87/164) | −6.8 | −2.5 | +1.2 |
+| MBPP-378 pass@1 (partial 115/378) | ~50.4 % running | ~−10.7 | ~−10.7 | ~−1.4 |
+
+Training was healthy (loss 0.27-0.39 across 46 steps, ~81 % positions
+aligned). The bug fixes recovered +14.6 pp HE vs the buggy M6 run (38.4 →
+53.0), so the original bugs were real and material — but cross-vocab CTD
+with `first_token` projection still lands **2.5 pp below the same-vocab
+GKD baseline**. The "first 50 problems at 81.5 %" was problem-difficulty
+bias — the harder second-half HE problems pulled the rate back to 53 %.
+
+### v6U decision (informed by M6b)
+
+The original gate rule was `C ≥ 0.8 × B AND C > A → ship CTD`. With this
+pod's actual numbers:
+
+- B (M3 same-vocab GKD) = 55.5 % HE → 0.8 × B = 44.4 %.
+- A (SFT) = 51.8 % HE.
+- **C (M6b cross-vocab CTD with first_token) = 53.0 % HE.**
+
+Mechanically: C > 0.8 × B ✓ and C > A (+1.2 pp) ✓ — so the gate technically
+*passes*. But the practical reading is that cross-vocab CTD recovers
+**most** of same-vocab quality while losing 2.5 pp to the projection. For
+Mythic-RDT v6U, the choice is:
+
+- **Cross-vocab Qwen3-Coder teacher**: gains a stronger model (Qwen3-Coder >
+  DS-Coder-V2-236B on most code benches) at the cost of ~2.5 pp from
+  projection. Net effect depends on the teacher gap being > 2.5 pp.
+- **Same-vocab DS-Coder-V2-236B teacher**: simpler, no projection loss, but
+  capped at the V2 family's quality ceiling.
+
+Recommendation: **lean same-vocab DS-Coder-V2-236B for Mythic-RDT v6U**
+unless we can close the 2.5 pp CTD gap further (next experiments to try:
+`student_offset` alignment with suffix re-encode for full-coverage
+distillation, or hybrid loss that gates KL/SFT on per-position projection
+mass — see "Anti-patterns to avoid" / "Open questions" in
+[`omnimergekit/docs/METHOD_kl_distillation.md`](https://github.com/mann1x/omnimergekit/blob/main/docs/METHOD_kl_distillation.md)).
 
 ### Decision rule for v6U
 
