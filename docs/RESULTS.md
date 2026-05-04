@@ -83,33 +83,50 @@ Smoke (16 prompts, 2 optimizer steps):
 - Loss = 2.46 → 2.69 across the 2 steps; same magnitude as same-vocab FKL
   on this corpus, confirming the projected distribution is in the right ballpark.
 
-### Full M6 results (FAILED the gate)
+### M6 first attempt — RETRACTED (code bug, re-run as M6b)
 
-| Metric | Value | Δ vs base | Δ vs M3 (same-vocab GKD) | Δ vs SFT |
-|---|---|---|---|---|
-| HumanEval-164 pass@1 | **38.4 %** (63 / 164) | **−21.4** | −17.1 | −13.4 |
-| MBPP-378 pass@1 (partial 175/378) | ~36 % running | ~−25 | ~−25 | ~−24 |
+The first M6 run finished training (loss 2.57 → 0.92, ~73 % positions aligned)
+and HE-164 = 38.4 % (−21.4 vs base, −17.1 vs M3 same-vocab). That number is
+**not a valid CTD-vs-same-vocab gate** — code review of
+`06_train_onpolicy_xv.py` found two real bugs that contaminate the result:
 
-Training was healthy (loss 2.57 → 0.92 over 46 optimizer steps, ~73 % of
-positions aligned per example) but the trained student dropped 21 pp HE
-vs base. **Cross-vocab CTD with `byte_anchor` + `multi_token=distribute`
-on a 5× vocab gap (Qwen 152 K → DS-Coder 32 K) destroyed signal far worse
-than expected.** The 80.9 % multi-token mass appears to smear teacher
-probability across many low-confidence student tokens; the projection
-fidelity is too low at this coverage to drive the small student
-constructively.
+1. **Sample/train tensor layout mismatch.** Student was sampled on a
+   left-padded tensor (`generate(input_ids=…)` from the DataLoader), then
+   re-forwarded for training on a freshly **right-padded** tensor of the
+   re-packed sequences. RoPE position encoding (DS-Coder is Llama-family)
+   then puts the same logical token at a different absolute position in
+   the two forwards — the KL trains the student against teacher logits at
+   positions the student will never actually be at during inference.
+   M5 (same-vocab, working) avoids this by forwarding both models on the
+   same left-padded `full_ids`.
+2. **Latent prompt-text index drift after filtering.** When any example in
+   the batch was dropped via `continue` (empty row, empty teacher tokens,
+   etc.), the subsequent filtered-list index `b_idx` was used to read
+   `batch["prompt_texts"][b_idx]` — i.e. the **wrong prompt's** text for
+   computing `prompt_len_s`. Low frequency at batch_size=2 but a real
+   silent corruption.
 
-**v6U decision rule fires:** `C ≤ A → fall back to DS-Coder-V2-236B
-same-vocab teacher` for Mythic-RDT. Cross-vocab teacher with this projection
-configuration is not the path. Future CTD work to revisit:
+There's also a design issue compounding the bugs: mapper coverage is
+19.1 % single-token / **80.9 % multi-token** for Qwen 152 K → DS-Coder 32 K.
+With `multi_token=distribute`, a teacher token that splits to N student
+tokens has its mass spread across all N student vocab indices at the same
+position — training the student to favor *fragments* over coherent
+identifiers. The eval failures (NameError on undefined symbols,
+IndentationError, TypeError "int not callable") match exactly that
+fragment-emission signature.
 
-- `student_offset` alignment (full coverage at 1.5-2× compute) instead of
-  `byte_anchor` — may recover the dropped 36 % of positions and the signal
-  carried in them.
-- `multi_token=strict` (skip multi-token teacher tokens entirely) on a pair
-  with higher single-token coverage (e.g. closer-vocab teacher).
-- Hybrid loss: KL only at high-confidence projected positions, SFT at the
-  rest, with a confidence threshold derived from projection mass retained.
+**M6b** will re-run with all four fixes:
+
+1. Forward student on the same left-padded tensor used for sampling
+   (mirror M5's structure exactly); keep teacher on its own re-tokenized
+   tensor (cross-vocab still requires that).
+2. Index `prompt_texts` via the original batch position, not the filtered
+   list index.
+3. Switch loss aggregation to global-mean-over-positions to match M5.
+4. Rebuild mapper with `multi_token=first_token` (puts teacher mass on a
+   single coherent next-token target for multi-token entries).
+
+The v6U decision rule (`C vs A vs B`) cannot be evaluated until M6b lands.
 
 ### Decision rule for v6U
 
