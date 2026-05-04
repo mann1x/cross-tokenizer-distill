@@ -181,6 +181,7 @@ HumanEval-164 + MBPP-378 full sets):
 | SFT (mbpp_train, same recipe as M3) | cross-entropy | 51.8 % | −8.0 |
 | ~~M6 first attempt~~ | ~~cross-vocab CTD~~ | ~~38.4~~ | **retracted (code bug — see RESULTS.md)** |
 | **M6b** (re-run with bug fixes + `multi_token=first_token`) | CTD on-policy FKL | **53.0** HE / **53.2** MBPP | HE gate ✓, MBPP regression vs M3 — **CTD parity push next** |
+| **M7** (capacity test: rank 64, ep 4, M5 recipe) | same-vocab on-policy FKL | **54.3** HE / 59.6 MBPP partial | −1.8 vs M5; capacity NOT the bottleneck |
 
 Headline finding from M3/M4/M5: **distillation regularises vs SFT by
 3.7–4.3 pp on HE at the same recipe** — the teacher signal stops the small

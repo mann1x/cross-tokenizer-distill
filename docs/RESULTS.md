@@ -228,11 +228,11 @@ the cross-vocab projection is not throwing away meaningful teacher signal.
 
 ## What's planned next
 
-| ID | Run | Hypothesis being tested |
-|---|---|---|
-| M6 | cross-vocab on-policy (Qwen2.5-Coder-7B teacher) | does CTD recover same-vocab quality? gate for v6U |
-| M7 | capacity test (rank=64, 4 epochs, M3 recipe) | does the same KL recipe beat base if we let it learn longer? |
-| M8 | mixed corpus (MBPP-train + ~1500 HE-style synthetic from base) | is the corpus the bottleneck, not the loss? |
+| ID | Run | Hypothesis being tested | Result |
+|---|---|---|---|
+| M6b | cross-vocab on-policy (Qwen2.5-Coder-7B teacher) | does CTD recover same-vocab quality? gate for v6U | HE 53.0 / MBPP 53.2 — gate ✓ HE, MBPP regression vs M3, parity push next |
+| **M7** | capacity test (rank=64, 4 epochs, M3 recipe) | does same recipe beat base with more capacity / time? | **HE 54.3 / MBPP partial 59.6** — capacity NOT the bottleneck; rank 64+ep 4 slightly regresses vs rank 16+ep 2 (M5 56.1) |
+| M8 | mixed corpus (MBPP-train + ~1500 HE-style synthetic from base) | is the corpus the bottleneck, not the loss? | running |
 
 ## Reproduction
 
