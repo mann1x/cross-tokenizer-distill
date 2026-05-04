@@ -160,11 +160,13 @@ two candidate teachers are not equally strong. Published HumanEval pass@1:
 | Teacher | HE pass@1 | Operational cost (Mythic-RDT serving) |
 |---|---|---|
 | DeepSeek-Coder-V2-236B-Instruct (same-vocab) | ~75 % | 236 B params, multi-GPU, ~250 GB VRAM bf16 |
-| Qwen3-Coder-Next-7B (cross-vocab via CTD) | ~82 % | 7 B params, single-GPU, ~14 GB VRAM bf16 |
+| Qwen3-Coder-30B-A3B (cross-vocab via CTD) | ~82 % | 30 B total / 3 B active, single-GPU, ~60 GB VRAM bf16 |
+| Qwen3-Coder-Next-80B (cross-vocab via CTD) | ~85 % (per Qwen team) | 80 B params, multi-GPU but smaller than 236 B, ~160 GB VRAM bf16 |
 
-That ~7 pp teacher-quality gap on HE plus a ~30× memory advantage
-flips the v6U calculus: even at the current M6b projection cost, net
-expected HE gain ≈ +7 pp (teacher) − 2.5 pp (projection) = **+4.5 pp**.
+That ~7-10 pp teacher-quality gap on HE plus the dramatic active-parameter
+advantage of the 30B-A3B option flips the v6U calculus: even at the current
+M6b projection cost, net expected HE gain with 30B-A3B ≈ +7 pp (teacher)
+− 2.5 pp (projection) = **+4.5 pp**.
 For Mythic-RDT v6U, the choice is:
 
 - **Cross-vocab Qwen3-Coder teacher**: gains a stronger model (Qwen3-Coder >
@@ -183,10 +185,13 @@ and MBPP), then ship to v6U.
 
 Iteration plan ("CTD parity push"):
 
-1. Build a **diff-smoke** corpus: HE problems where M3 (same-vocab GKD)
-   PASSED but M6b (CTD) FAILED. These are the problems that the
-   projection is specifically destroying. Iterate fast on this small
-   set instead of paying for full HE-164 every recipe change.
+1. Build a **diff-smoke** corpus from the M3-vs-M6b HE-164 DBs:
+   - 19 problems M3 passed but M6b failed (the projection-specific failures)
+   - 72 problems both passed (regression guard set)
+   - 58 problems both failed (not actionable for CTD recipe iteration)
+   Total smoke set = 91 problems (19 + 72), eval cost ~50 % of full HE-164,
+   with a much sharper signal-to-noise ratio for "did the recipe change
+   help where projection is hurting?"
 2. Sweep recipe knobs in priority order:
    a. `student_offset` alignment + suffix re-encode (full coverage,
       recover the ~20 % positions `byte_anchor` drops; ~1.5-2× compute
