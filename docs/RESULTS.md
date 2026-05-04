@@ -83,7 +83,33 @@ Smoke (16 prompts, 2 optimizer steps):
 - Loss = 2.46 → 2.69 across the 2 steps; same magnitude as same-vocab FKL
   on this corpus, confirming the projected distribution is in the right ballpark.
 
-Full M6 results (374 prompts × 2 epochs + HE-164 + MBPP-378 eval): pending.
+### Full M6 results (FAILED the gate)
+
+| Metric | Value | Δ vs base | Δ vs M3 (same-vocab GKD) | Δ vs SFT |
+|---|---|---|---|---|
+| HumanEval-164 pass@1 | **38.4 %** (63 / 164) | **−21.4** | −17.1 | −13.4 |
+| MBPP-378 pass@1 (partial 175/378) | ~36 % running | ~−25 | ~−25 | ~−24 |
+
+Training was healthy (loss 2.57 → 0.92 over 46 optimizer steps, ~73 % of
+positions aligned per example) but the trained student dropped 21 pp HE
+vs base. **Cross-vocab CTD with `byte_anchor` + `multi_token=distribute`
+on a 5× vocab gap (Qwen 152 K → DS-Coder 32 K) destroyed signal far worse
+than expected.** The 80.9 % multi-token mass appears to smear teacher
+probability across many low-confidence student tokens; the projection
+fidelity is too low at this coverage to drive the small student
+constructively.
+
+**v6U decision rule fires:** `C ≤ A → fall back to DS-Coder-V2-236B
+same-vocab teacher` for Mythic-RDT. Cross-vocab teacher with this projection
+configuration is not the path. Future CTD work to revisit:
+
+- `student_offset` alignment (full coverage at 1.5-2× compute) instead of
+  `byte_anchor` — may recover the dropped 36 % of positions and the signal
+  carried in them.
+- `multi_token=strict` (skip multi-token teacher tokens entirely) on a pair
+  with higher single-token coverage (e.g. closer-vocab teacher).
+- Hybrid loss: KL only at high-confidence projected positions, SFT at the
+  rest, with a confidence threshold derived from projection mass retained.
 
 ### Decision rule for v6U
 
