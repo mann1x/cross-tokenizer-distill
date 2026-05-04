@@ -126,12 +126,12 @@ fragment-emission signature.
 4. Rebuild mapper with `multi_token=first_token` (puts teacher mass on a
    single coherent next-token target for multi-token entries).
 
-### M6b results (HE-164 final, MBPP partial)
+### M6b results (full, both benches)
 
-| Metric | Value | Δ vs base 59.8 | Δ vs M3 55.5 (same-vocab GKD) | Δ vs SFT 51.8 |
+| Metric | Value | Δ vs base | Δ vs M3 (same-vocab GKD) | Δ vs SFT |
 |---|---|---|---|---|
 | HumanEval-164 pass@1 | **53.0 %** (87/164) | −6.8 | −2.5 | +1.2 |
-| MBPP-378 pass@1 (partial 115/378) | ~50.4 % running | ~−10.7 | ~−10.7 | ~−1.4 |
+| MBPP-378 pass@1 | **53.2 %** (201/378) | −7.9 | −7.9 | −6.3 |
 
 Training was healthy (loss 0.27-0.39 across 46 steps, ~81 % positions
 aligned). The bug fixes recovered +14.6 pp HE vs the buggy M6 run (38.4 →
@@ -149,10 +149,11 @@ pod's actual numbers:
 - A (SFT) = 51.8 % HE.
 - **C (M6b cross-vocab CTD with first_token) = 53.0 % HE.**
 
-Mechanically: C > 0.8 × B ✓ and C > A (+1.2 pp) ✓ — so the gate technically
-*passes*. But the practical reading is that cross-vocab CTD recovers
-**most** of same-vocab quality while losing 2.5 pp to the projection. For
-Mythic-RDT v6U, the choice is:
+Mechanically on HE: C > 0.8 × B ✓ and C > A (+1.2 pp) ✓ — so the HE gate
+technically *passes*. **On MBPP, however, M6b regresses 7.9 pp vs M3** —
+the projection cost compounds across the longer-form MBPP problems,
+where any per-token signal loss accumulates over 30+ tokens of generation.
+For Mythic-RDT v6U, the choice is:
 
 - **Cross-vocab Qwen3-Coder teacher**: gains a stronger model (Qwen3-Coder >
   DS-Coder-V2-236B on most code benches) at the cost of ~2.5 pp from
@@ -160,12 +161,16 @@ Mythic-RDT v6U, the choice is:
 - **Same-vocab DS-Coder-V2-236B teacher**: simpler, no projection loss, but
   capped at the V2 family's quality ceiling.
 
-Recommendation: **lean same-vocab DS-Coder-V2-236B for Mythic-RDT v6U**
-unless we can close the 2.5 pp CTD gap further (next experiments to try:
-`student_offset` alignment with suffix re-encode for full-coverage
-distillation, or hybrid loss that gates KL/SFT on per-position projection
-mass — see "Anti-patterns to avoid" / "Open questions" in
-[`omnimergekit/docs/METHOD_kl_distillation.md`](https://github.com/mann1x/omnimergekit/blob/main/docs/METHOD_kl_distillation.md)).
+Recommendation: **same-vocab DS-Coder-V2-236B for Mythic-RDT v6U**.
+The −7.9 pp MBPP regression makes a clean cross-vocab choice hard to
+defend without first closing the projection cost. Next CTD experiments
+to try (off the v6U critical path):
+
+- `student_offset` alignment with suffix re-encode for full-coverage
+  distillation (recover the ~20 % positions dropped by `byte_anchor`).
+- Hybrid loss that gates KL/SFT on per-position projection mass.
+- Larger `out_topk` (we used 32; try 64 or 128 to retain more of the
+  projected teacher distribution before normalisation).
 
 ### Decision rule for v6U
 
