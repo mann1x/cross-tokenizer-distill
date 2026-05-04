@@ -150,9 +150,21 @@ pod's actual numbers:
 - **C (M6b cross-vocab CTD with first_token) = 53.0 % HE.**
 
 Mechanically on HE: C > 0.8 × B ✓ and C > A (+1.2 pp) ✓ — so the HE gate
-technically *passes*. **On MBPP, however, M6b regresses 7.9 pp vs M3** —
+technically *passes*. **On MBPP, M6b regresses 7.9 pp vs M3** —
 the projection cost compounds across the longer-form MBPP problems,
 where any per-token signal loss accumulates over 30+ tokens of generation.
+
+But the in-isolation comparison is misleading for the v6U decision: the
+two candidate teachers are not equally strong. Published HumanEval pass@1:
+
+| Teacher | HE pass@1 | Operational cost (Mythic-RDT serving) |
+|---|---|---|
+| DeepSeek-Coder-V2-236B-Instruct (same-vocab) | ~75 % | 236 B params, multi-GPU, ~250 GB VRAM bf16 |
+| Qwen3-Coder-Next-7B (cross-vocab via CTD) | ~82 % | 7 B params, single-GPU, ~14 GB VRAM bf16 |
+
+That ~7 pp teacher-quality gap on HE plus a ~30× memory advantage
+flips the v6U calculus: even at the current M6b projection cost, net
+expected HE gain ≈ +7 pp (teacher) − 2.5 pp (projection) = **+4.5 pp**.
 For Mythic-RDT v6U, the choice is:
 
 - **Cross-vocab Qwen3-Coder teacher**: gains a stronger model (Qwen3-Coder >
@@ -161,16 +173,37 @@ For Mythic-RDT v6U, the choice is:
 - **Same-vocab DS-Coder-V2-236B teacher**: simpler, no projection loss, but
   capped at the V2 family's quality ceiling.
 
-Recommendation: **same-vocab DS-Coder-V2-236B for Mythic-RDT v6U**.
-The −7.9 pp MBPP regression makes a clean cross-vocab choice hard to
-defend without first closing the projection cost. Next CTD experiments
-to try (off the v6U critical path):
+Recommendation: **lean cross-vocab Qwen3-Coder for Mythic-RDT v6U** —
+the +7 pp teacher gap dominates the −2.5 pp HE projection cost on the
+v6U headline benchmark. **But not at current M6b cost** — the −7.9 pp MBPP
+regression is large enough that it would erase the teacher-quality win on
+the secondary benchmark. The plan is to first iterate the CTD recipe to
+match same-vocab quality (M6b → M6c → ... until parity with M3 on both HE
+and MBPP), then ship to v6U.
 
-- `student_offset` alignment with suffix re-encode for full-coverage
-  distillation (recover the ~20 % positions dropped by `byte_anchor`).
-- Hybrid loss that gates KL/SFT on per-position projection mass.
-- Larger `out_topk` (we used 32; try 64 or 128 to retain more of the
-  projected teacher distribution before normalisation).
+Iteration plan ("CTD parity push"):
+
+1. Build a **diff-smoke** corpus: HE problems where M3 (same-vocab GKD)
+   PASSED but M6b (CTD) FAILED. These are the problems that the
+   projection is specifically destroying. Iterate fast on this small
+   set instead of paying for full HE-164 every recipe change.
+2. Sweep recipe knobs in priority order:
+   a. `student_offset` alignment + suffix re-encode (full coverage,
+      recover the ~20 % positions `byte_anchor` drops; ~1.5-2× compute
+      but covers the gap).
+   b. `multi_token=first_token` is current default — try `strict`
+      (skip multi-token entries entirely; smaller training signal but
+      no smearing) for ablation.
+   c. Larger `out_topk` (32 → 64 → 128) to retain more of the projected
+      teacher distribution before renormalisation.
+   d. Hybrid loss: KL on positions where projected mass is ≥ τ; SFT-on-teacher
+      otherwise. Gates the lossy KL on signal quality.
+   e. Temperature sweep T ∈ {1.0, 1.5, 2.0} (Hinton softening helps
+      multi-modal projected distributions).
+3. Decision rule per knob: a candidate must beat M6b on diff-smoke
+   pass-rate AND not regress on the M3-passed problems.
+4. Once parity (M6N matches M3 on both HE and MBPP within ±1 pp),
+   ship M6N recipe to Mythic-RDT v6U with the real Qwen3-Coder teacher.
 
 ### Decision rule for v6U
 
