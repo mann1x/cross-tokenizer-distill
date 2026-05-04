@@ -166,9 +166,28 @@ Decision rules:
 
 ## Status
 
-Pre-alpha. Scaffolded 2026-05-02. First user: Mythic-RDT v6U
-(speculative).
+Pre-alpha. Scaffolded 2026-05-02. First user: Mythic-RDT v6U.
+
+**Validation in progress** — see [`docs/RESULTS.md`](docs/RESULTS.md) for live numbers.
+Highlights from the pod 35822024 run (DS-Coder-1.3B-Instruct student,
+HumanEval-164 + MBPP-378 full sets):
+
+| Run | Method | HE-164 | Δ vs base |
+|---|---|---|---|
+| BASE | no-FT | 59.8 % | — |
+| M3 (same-vocab GKD, JSD β=0.5) | KL distill | 55.5 % | −4.3 |
+| M4 (same-vocab MiniLLM, RKL on-policy) | reverse-KL distill | 54.3 % | −5.5 |
+| M5 (same-vocab DistillSpec/FKL on-policy) | forward-KL distill | 56.1 % | −3.7 |
+| SFT (mbpp_train, same recipe as M3) | cross-entropy | 51.8 % | −8.0 |
+| **M6 (cross-vocab CTD, Qwen2.5-Coder-7B teacher)** | **CTD on-policy FKL** | *running…* | *target ≥ 53 %* |
+
+Headline finding from M3/M4/M5: **distillation regularises vs SFT by
+3.7–4.3 pp on HE at the same recipe** — the teacher signal stops the small
+student from overfitting the narrow training set, but no same-vocab variant
+beats the no-FT base on this corpus. M6 (cross-vocab CTD with a 7B teacher),
+M7 (capacity test, rank 64 + 4 ep), and M8 (mixed corpus) are in flight to
+break the ceiling.
 
 ## License
 
-Apache-2.0 (target — to be finalised before public release).
+MIT — see [LICENSE](LICENSE).

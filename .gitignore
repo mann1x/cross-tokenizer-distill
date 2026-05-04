@@ -16,3 +16,5 @@ experiments/validation/data/
 experiments/validation/results/
 experiments/validation/cache_*/
 .DS_Store
+.caliber/
+experiments/validation/logs/

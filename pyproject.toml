@@ -8,7 +8,7 @@ version = "0.0.1"
 description = "Knowledge distillation across different tokenizer vocabularies."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "Apache-2.0" }
+license = { text = "MIT" }
 authors = [{ name = "Mythic-RDT contributors" }]
 keywords = ["distillation", "knowledge-distillation", "tokenizer", "transformers", "llm"]
 

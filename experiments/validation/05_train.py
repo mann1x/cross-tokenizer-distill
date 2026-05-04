@@ -103,6 +103,10 @@ def main() -> int:
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--grad-accum", type=int, default=4)
     parser.add_argument("--max-seq-len", type=int, default=1024)
+    parser.add_argument("--warmup-steps", type=int, default=100,
+                        help="LR warmup steps (TrainingArguments).")
+    parser.add_argument("--lr-scheduler", default="cosine",
+                        choices=["cosine","linear","constant","constant_with_warmup"])
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 
@@ -155,8 +159,8 @@ def main() -> int:
         bf16=True,
         logging_steps=10,
         save_strategy="epoch",
-        warmup_steps=100,
-        lr_scheduler_type="cosine",
+        warmup_steps=args.warmup_steps,
+        lr_scheduler_type=args.lr_scheduler,
         seed=args.seed,
         report_to=[],
     )

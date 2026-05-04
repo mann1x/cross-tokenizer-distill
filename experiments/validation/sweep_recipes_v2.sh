@@ -58,12 +58,24 @@ for entry in "${RECIPES[@]}"; do
         --ctd-weight-warmup-steps $WS \
         2>&1 | tail -3
     python -u smoke_he20.py --adapter $OUT_DIR --output $SMOKE_OUT 2>&1 | tail -7
-    python3 -c "
-import json
-r = json.load(open('$SMOKE_OUT'))
-b = r['buckets']
-o = r['overall']
-print(f\"$NAME\t$W\t$T\t$KIND\t$EP\t$LR\t$WS\t{b['success_control']['n_pass']}\t{b['b_improves']['n_pass']}\t{b['b_regressions']['n_pass']}\t{b['both_fail_stretch']['n_pass']}\t{o['n_pass']}\t{o['pass@1']:.1%}\"" >> $LOG
+    # Append result row to TSV (use env vars to avoid python -c quoting hell).
+    SMOKE_PATH=$SMOKE_OUT NAME=$NAME W=$W T=$T KIND=$KIND EP=$EP LR=$LR WS=$WS \
+    python3 << 'PYEOF' >> $LOG
+import json, os
+r = json.load(open(os.environ['SMOKE_PATH']))
+b = r['buckets']; o = r['overall']
+fields = [
+    os.environ['NAME'], os.environ['W'], os.environ['T'], os.environ['KIND'],
+    os.environ['EP'], os.environ['LR'], os.environ['WS'],
+    str(b['success_control']['n_pass']),
+    str(b['b_improves']['n_pass']),
+    str(b['b_regressions']['n_pass']),
+    str(b['both_fail_stretch']['n_pass']),
+    str(o['n_pass']),
+    f"{o['pass@1']:.1%}",
+]
+print('\t'.join(fields))
+PYEOF
 done
 
 echo ""
