@@ -241,8 +241,8 @@ All same-vocab on-policy FKL on the 374-prompt MBPP-train corpus, sequential.
 
 | ID | Knob | Status | HE-164 | MBPP-378 |
 |---|---|---|---|---|
-| **M9** | `lr 2e-5, ep 2, rank 16` | done | **53.7** | running (66.7 % @ n=12) |
-| M10 | `lr 1e-5, ep 2, rank 16` | queued | — | — |
+| **M9** | `lr 2e-5, ep 2, rank 16` | done | **53.7** | **60.1** |
+| M10 | `lr 1e-5, ep 2, rank 16` | training | — | — |
 | M11 | `lr 5e-5, ep 1, rank 16` | queued | — | — |
 | M13 | `lr 5e-5, ep 2, rank 16, T=2.0` | queued | — | — |
 | M14 | `lr 2e-5, ep 1, rank 16` | queued | — | — |
