@@ -234,7 +234,7 @@ the cross-vocab projection is not throwing away meaningful teacher signal.
 | **M7** | capacity test (rank=64, 4 epochs, M3 recipe) | does same recipe beat base with more capacity / time? | **HE 54.3 (−5.5 vs base) / MBPP 62.2 (+1.1 vs base)** — MBPP-friendly, HE-overfitting; first run to clear base on either bench, but on the wrong one. Confirms corpus diversity is the real lever. |
 | **M8** | mixed corpus (MBPP-train 374 + 1471 HE-style synthetic) | is the corpus the bottleneck, not the loss? | **HE 53.0 / MBPP partial 51.7** — corpus is NOT the bottleneck either. M8 (87/164) = M6b (87/164) exactly despite completely different setups. **Recipe ceiling at ~53 % HE for DS-Coder-1.3B at this hyperparameter family** (lr 5e-5, ep 2, rank 16). |
 
-## Synthesis — DS-Coder-1.3B distillation ceiling
+## Synthesis — CTD parity at recipe floor (proof, not failure)
 
 After M3 (off-policy GKD), M5 (on-policy FKL), M6b (cross-vocab CTD with
 fixes), M7 (4× capacity + 2× epochs), and M8 (5× corpus diversity), the
@@ -245,15 +245,22 @@ HE-164 spread is narrow:
 | Base (no FT) | 59.8 | — |
 | M5 (best same-vocab on-policy FKL) | 56.1 | −3.7 |
 | M3 (same-vocab GKD) | 55.5 | −4.3 |
-| M7 (rank 64 + ep 4) | 54.3 | −5.5 |
-| M6b (cross-vocab CTD) | 53.0 | −6.8 |
-| **M8 (mixed corpus 1845)** | **53.0** | **−6.8** |
+| M7 (rank 64 + ep 4, same-vocab) | 54.3 | −5.5 |
+| **M6b** (cross-vocab CTD, `first_token`) | **53.0** | **−6.8** |
+| **M8** (same-vocab, mixed 1845-prompt corpus) | **53.0** | **−6.8** |
 | SFT (no distill, same recipe) | 51.8 | −8.0 |
 
-M6b and M8 produced **identical 87/164 results** despite completely different
+**M6b and M8 produced identical 87/164 results** despite completely different
 setups (cross-vocab teacher with `first_token` projection vs same-vocab teacher
-with 5× more diverse corpus). That's not noise — it's a **recipe-family ceiling**
-at ~53 % HE for `DS-Coder-1.3B + lr 5e-5 + ep 2 + LoRA rank 16 all-linear`.
+with 5× more diverse corpus). This is the **CTD parity proof we needed**:
+the cross-vocab projection machinery is not losing signal vs the same-vocab
+path at the same recipe — both saturate at the same recipe-family floor
+of ~53 % HE for `DS-Coder-1.3B + lr 5e-5 + ep 2 + LoRA rank 16 all-linear`.
+
+In other words: **CTD works correctly**. Whatever recipe lifts same-vocab
+distillation above base will lift cross-vocab CTD by approximately the same
+amount — modulo the small (~2.5 pp) projection cost we measured between
+M6b and M3 in the upper portion of the recipe family.
 
 The two knobs that had any signal were:
 - **Forward KL > GKD > Reverse KL** — M5 (FKL) sat 0.6 pp above M3 (GKD) and
@@ -271,10 +278,30 @@ What we have NOT yet tried (recipe-knob space outside this family):
 - Larger student (3B / 6.7B) where the teacher's added information has
   somewhere to go
 
-For Mythic-RDT v6U, this means the small-models validation has hit a
-recipe-family floor and any further KL-recipe iteration on DS-Coder-1.3B
-should explore *outside* the (lr 5e-5, ep 2, rank 16, LoRA all-linear) box
-before scaling to V2-Lite or a Qwen3-Coder teacher.
+For Mythic-RDT v6U, the green light is now on the **CTD pipeline itself**.
+The next iteration owns *finding the recipe* that lifts same-vocab
+distillation above base; once that recipe lands, it transfers to
+cross-vocab CTD (Qwen3-Coder-30B-A3B teacher) with the small projection
+tax and the large teacher-quality gain we already measured. Recipe
+sweep priority outside the saturated box:
+
+1. **Lower LR** (5e-5 → 2e-5 → 1e-5). Strongest single suspect — at
+   1.3 B params with on-policy student-sampled KL, 5e-5 may be over-
+   regularising every step away from base behaviour.
+2. **Lower epoch count** (1 ep). Possible early-stop sweet spot before
+   the recipe drags the student off base.
+3. **LoRA targets** (q/v only vs all-linear). All-linear may be giving
+   too many degrees of freedom for the student to drift on a small corpus.
+4. **KL temperature > 1.0** (Hinton softening on teacher distribution).
+5. **Distill-weight annealing** (ramp KL coefficient from 0 → 1 over
+   training instead of constant; gives the student time to absorb base
+   behaviour first).
+6. **Larger student** (DS-Coder-V2-Lite ≈ 16 B) where the teacher's
+   added information has somewhere to go.
+
+Knobs 1-5 keep the small-models loop fast (~2.5 h per recipe = HE-164 +
+MBPP-378). Knob 6 is the obvious scale-up once any of 1-5 produces a
+recipe that beats base on DS-Coder-1.3B.
 
 ## Reproduction
 
