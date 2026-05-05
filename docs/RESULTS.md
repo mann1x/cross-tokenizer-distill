@@ -231,7 +231,7 @@ the cross-vocab projection is not throwing away meaningful teacher signal.
 | ID | Run | Hypothesis being tested | Result |
 |---|---|---|---|
 | M6b | cross-vocab on-policy (Qwen2.5-Coder-7B teacher) | does CTD recover same-vocab quality? gate for v6U | HE 53.0 / MBPP 53.2 — gate ✓ HE, MBPP regression vs M3, parity push next |
-| **M7** | capacity test (rank=64, 4 epochs, M3 recipe) | does same recipe beat base with more capacity / time? | **HE 54.3 / MBPP partial 59.6** — capacity NOT the bottleneck; rank 64+ep 4 slightly regresses vs rank 16+ep 2 (M5 56.1) |
+| **M7** | capacity test (rank=64, 4 epochs, M3 recipe) | does same recipe beat base with more capacity / time? | **HE 54.3 (−5.5 vs base) / MBPP 62.2 (+1.1 vs base)** — MBPP-friendly, HE-overfitting; first run to clear base on either bench, but on the wrong one. Confirms corpus diversity is the real lever. |
 | M8 | mixed corpus (MBPP-train + ~1500 HE-style synthetic from base) | is the corpus the bottleneck, not the loss? | running |
 
 ## Reproduction
