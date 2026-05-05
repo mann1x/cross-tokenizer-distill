@@ -182,6 +182,7 @@ HumanEval-164 + MBPP-378 full sets):
 | ~~M6 first attempt~~ | ~~cross-vocab CTD~~ | ~~38.4~~ | **retracted (code bug — see RESULTS.md)** |
 | **M6b** (re-run with bug fixes + `multi_token=first_token`) | CTD on-policy FKL | **53.0** HE / **53.2** MBPP | HE gate ✓, MBPP regression vs M3 — **CTD parity push next** |
 | **M7** (capacity test: rank 64, ep 4, M5 recipe) | same-vocab on-policy FKL | **54.3** HE / **62.2** MBPP | HE −5.5 / MBPP **+1.1** vs base — first to clear base, but on MBPP not HE |
+| **M8** (mixed corpus: MBPP 374 + synthetic 1471) | same-vocab on-policy FKL | **53.0** HE / 51.7 MBPP partial | HE −6.8 vs base, identical to M6b — recipe ceiling, not corpus |
 
 Headline finding from M3/M4/M5: **distillation regularises vs SFT by
 3.7–4.3 pp on HE at the same recipe** — the teacher signal stops the small

@@ -232,7 +232,49 @@ the cross-vocab projection is not throwing away meaningful teacher signal.
 |---|---|---|---|
 | M6b | cross-vocab on-policy (Qwen2.5-Coder-7B teacher) | does CTD recover same-vocab quality? gate for v6U | HE 53.0 / MBPP 53.2 — gate ✓ HE, MBPP regression vs M3, parity push next |
 | **M7** | capacity test (rank=64, 4 epochs, M3 recipe) | does same recipe beat base with more capacity / time? | **HE 54.3 (−5.5 vs base) / MBPP 62.2 (+1.1 vs base)** — MBPP-friendly, HE-overfitting; first run to clear base on either bench, but on the wrong one. Confirms corpus diversity is the real lever. |
-| M8 | mixed corpus (MBPP-train + ~1500 HE-style synthetic from base) | is the corpus the bottleneck, not the loss? | running |
+| **M8** | mixed corpus (MBPP-train 374 + 1471 HE-style synthetic) | is the corpus the bottleneck, not the loss? | **HE 53.0 / MBPP partial 51.7** — corpus is NOT the bottleneck either. M8 (87/164) = M6b (87/164) exactly despite completely different setups. **Recipe ceiling at ~53 % HE for DS-Coder-1.3B at this hyperparameter family** (lr 5e-5, ep 2, rank 16). |
+
+## Synthesis — DS-Coder-1.3B distillation ceiling
+
+After M3 (off-policy GKD), M5 (on-policy FKL), M6b (cross-vocab CTD with
+fixes), M7 (4× capacity + 2× epochs), and M8 (5× corpus diversity), the
+HE-164 spread is narrow:
+
+| Recipe family | HE-164 | Δ vs base |
+|---|---|---|
+| Base (no FT) | 59.8 | — |
+| M5 (best same-vocab on-policy FKL) | 56.1 | −3.7 |
+| M3 (same-vocab GKD) | 55.5 | −4.3 |
+| M7 (rank 64 + ep 4) | 54.3 | −5.5 |
+| M6b (cross-vocab CTD) | 53.0 | −6.8 |
+| **M8 (mixed corpus 1845)** | **53.0** | **−6.8** |
+| SFT (no distill, same recipe) | 51.8 | −8.0 |
+
+M6b and M8 produced **identical 87/164 results** despite completely different
+setups (cross-vocab teacher with `first_token` projection vs same-vocab teacher
+with 5× more diverse corpus). That's not noise — it's a **recipe-family ceiling**
+at ~53 % HE for `DS-Coder-1.3B + lr 5e-5 + ep 2 + LoRA rank 16 all-linear`.
+
+The two knobs that had any signal were:
+- **Forward KL > GKD > Reverse KL** — M5 (FKL) sat 0.6 pp above M3 (GKD) and
+  1.8 pp above M4 (RKL).
+- **Capacity helps MBPP, hurts HE** — M7's rank 64 + ep 4 pushed MBPP +1.1 vs
+  base while shaving HE −1.8 vs M5. MBPP-derived training data biases learning
+  toward MBPP-distribution patterns; more capacity captures more of that.
+
+What we have NOT yet tried (recipe-knob space outside this family):
+- Lower LR (5e-5 may be over-regularising — try 2e-5, 1e-5)
+- Lower epoch count (1 ep vs 2 — possible early-stop sweet spot)
+- Different LoRA targets (q/v only vs all-linear)
+- KL temperature > 1.0 (Hinton softening on the teacher distribution)
+- Distill weight / SFT-mix annealing
+- Larger student (3B / 6.7B) where the teacher's added information has
+  somewhere to go
+
+For Mythic-RDT v6U, this means the small-models validation has hit a
+recipe-family floor and any further KL-recipe iteration on DS-Coder-1.3B
+should explore *outside* the (lr 5e-5, ep 2, rank 16, LoRA all-linear) box
+before scaling to V2-Lite or a Qwen3-Coder teacher.
 
 ## Reproduction
 
