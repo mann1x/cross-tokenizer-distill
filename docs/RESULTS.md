@@ -234,6 +234,24 @@ the cross-vocab projection is not throwing away meaningful teacher signal.
 | **M7** | capacity test (rank=64, 4 epochs, M3 recipe) | does same recipe beat base with more capacity / time? | **HE 54.3 (−5.5 vs base) / MBPP 62.2 (+1.1 vs base)** — MBPP-friendly, HE-overfitting; first run to clear base on either bench, but on the wrong one. Confirms corpus diversity is the real lever. |
 | **M8** | mixed corpus (MBPP-train 374 + 1471 HE-style synthetic) | is the corpus the bottleneck, not the loss? | **HE 53.0 / MBPP 60.3** — corpus is NOT the bottleneck either. M8 (87/164) = M6b (87/164) exactly despite completely different setups. **Recipe ceiling at ~53 % HE for DS-Coder-1.3B at this hyperparameter family** (lr 5e-5, ep 2, rank 16). |
 
+## M9-M14 recipe sweep (in flight)
+
+Outside the saturated `(lr 5e-5, ep 2, rank 16, all-linear)` recipe family.
+All same-vocab on-policy FKL on the 374-prompt MBPP-train corpus, sequential.
+
+| ID | Knob | Status | HE-164 | MBPP-378 |
+|---|---|---|---|---|
+| **M9** | `lr 2e-5, ep 2, rank 16` | done | **53.7** | running (66.7 % @ n=12) |
+| M10 | `lr 1e-5, ep 2, rank 16` | queued | — | — |
+| M11 | `lr 5e-5, ep 1, rank 16` | queued | — | — |
+| M13 | `lr 5e-5, ep 2, rank 16, T=2.0` | queued | — | — |
+| M14 | `lr 2e-5, ep 1, rank 16` | queued | — | — |
+
+**M9 verdict:** lower LR alone (5e-5 → 2e-5) did NOT break the recipe-family
+ceiling. HE 53.7 sits +0.7 pp above M6b/M8 (53.0) but still −6.1 vs base.
+The early "64 % at n=111" reading was the same problem-difficulty bias as
+M6b/M8's early-half spikes.
+
 ## Synthesis — CTD parity at recipe floor (proof, not failure)
 
 After M3 (off-policy GKD), M5 (on-policy FKL), M6b (cross-vocab CTD with
