@@ -374,6 +374,8 @@ student into module-rewriter mode worse than M21.
 | M22 SFT mix-corpus (synth-polluted) | SFT cross-vocab mixed | 14.0 | 38.6 |
 | M21b/c SFT on Qwen-base | SFT cross-vocab | 0.0/0.6 | ~35 |
 | M26 KL-on-cache off-policy (Qwen-Inst funcsig) | KL cross-vocab off-policy | **3.7** | **0.8** |
+| M27 GRPO+KL Distill (NAIVE — teacher-LL reward) | GRPO + on-policy KL cross-vocab | 18.3 | 33.6 |
+| M28 GRPO+KL Distill (verified exec reward) | GRPO + on-policy KL cross-vocab | _in flight_ | _in flight_ |
 
 **Cross-vocab via SFT-on-teacher is dead** in this corpus regime — both
 Qwen-Instruct (rewrites) and Qwen-base (`pass` stubs) produce text that
@@ -381,6 +383,32 @@ trains the student into the wrong output shape. Only **on-policy KL**
 survives because the student never sees teacher's free generations
 (M6b retains 53 % cross-vocab); but on-policy KL is itself capped by
 recipe-family floor and projection cost.
+
+**M27 update (2026-05-06): naive GRPO+KL Distill variant collapsed at
+HE 18.3 / MBPP 33.6.** Recipe: K=4 on-policy samples per prompt,
+**reward = teacher log-likelihood of the sampled student tokens**
+(cross-vocab projected), group-relative GRPO advantage, frozen-base
+KL anchor (λ=0.1), teacher-distill KL aux (λ=0.5). Train metrics looked
+clean throughout (reward std 0.10-0.33 — advantage actually
+discriminating; kl_ref bounded at ~0.23; distill stable in M6b range).
+But generation collapsed: outputs include Chinese fullwidth punctuation
+`（` `：` (U+FF08, U+FF1A), mathematical Unicode `𝟏` (U+1D7CF),
+IndentationErrors, NameErrors. The reward signal **literally
+incentivizes "what teacher would say"** — and the teacher (Qwen-Inst)
+says verbose-Markdown-with-CJK-punctuation in its high-likelihood
+samples. **Lesson: teacher-LL-as-reward is the wrong reward for
+cross-vocab GRPO** — it pulls student into teacher's output style.
+The framework is fine; the reward choice was wrong (chosen because
+teacher LL is "free" — same forward as the KL term — but free is the
+wrong price when the signal teaches the wrong style).
+
+**M28 = GRPO+KL Distill with the CORRECT reward**: verified exec
+reward (1.0 if `exec(prompt+completion+test)` passes, else 0.0). Same
+GRPO + KL anchor + KL distill aux, but the PG signal is now
+style-agnostic by construction — student is rewarded only for tests
+passing, not for matching teacher's output mode. This is the standard
+GRPO+ recipe (DeepCoder/RLHF-style). MBPP-train has `test_list` per
+problem so the sandbox is plumbing-only. In flight at time of writing.
 
 **M26 update (2026-05-06): off-policy KL-on-cache also collapses
 catastrophically (HE 3.7 / MBPP 0.8 — worst result in the validation).**
