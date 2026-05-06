@@ -373,6 +373,7 @@ student into module-rewriter mode worse than M21.
 | M18 KL on-policy student_offset | KL cross-vocab dense | 31.1 | ~35 |
 | M22 SFT mix-corpus (synth-polluted) | SFT cross-vocab mixed | 14.0 | 38.6 |
 | M21b/c SFT on Qwen-base | SFT cross-vocab | 0.0/0.6 | ~35 |
+| M26 KL-on-cache off-policy (Qwen-Inst funcsig) | KL cross-vocab off-policy | **3.7** | **0.8** |
 
 **Cross-vocab via SFT-on-teacher is dead** in this corpus regime — both
 Qwen-Instruct (rewrites) and Qwen-base (`pass` stubs) produce text that
@@ -380,6 +381,18 @@ trains the student into the wrong output shape. Only **on-policy KL**
 survives because the student never sees teacher's free generations
 (M6b retains 53 % cross-vocab); but on-policy KL is itself capped by
 recipe-family floor and projection cost.
+
+**M26 update (2026-05-06): off-policy KL-on-cache also collapses
+catastrophically (HE 3.7 / MBPP 0.8 — worst result in the validation).**
+The "KL doesn't ingest style" hypothesis from M6b only holds for
+on-policy KL where student samples its own text. Off-policy KL on
+teacher-tokenized positions exposes the student to teacher-text style
+at every position — same style-shift exposure as SFT, plus a NEW
+failure mode: identifier mangling from `first_token` projection (e.g.
+`has__close__elements` with double underscores; `separate__paren__groups`).
+With 81 % multi-token teacher pieces, the projection ambiguity
+corrupts both naming and structural conventions. See
+`docs/STYLE_SHIFT_ISSUE.md` for the full analysis.
 
 **M23/M24 in flight** — hypothesis: training corpus shape was the
 problem, not the SFT loss. M23 = MBPP-only (474 real prompts, no

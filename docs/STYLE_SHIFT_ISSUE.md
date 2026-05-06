@@ -130,6 +130,83 @@ Added to `docs/SMOKE_PROCEDURE.md`:
 > the recipe has style shift and the full run will collapse —
 > abort.
 
+## Off-policy KL on cache also has style shift (M26, 2026-05-06)
+
+**Hypothesis tested**: off-policy KL on cached teacher logits would
+side-step style shift by matching distributions instead of CE-fitting
+teacher tokens. **Result: false.** M26 collapsed to **HE 3.7 / MBPP
+0.8** — worst result in the entire CTD validation, worse than every
+SFT recipe.
+
+### Why off-policy KL still ingests style
+
+The "KL doesn't ingest style" claim from M6b (53 % cross-vocab) only
+holds because **M6b is on-policy**: the student samples its own
+continuation, then teacher scores per-position logits. The student
+never sees teacher text as input.
+
+**Off-policy KL on cache (M26) is structurally different**: training
+positions ARE teacher text (the cached completions). At every
+teacher-text position, we ask the student to match the projected
+teacher distribution. This means the student is conditioned on
+teacher-text prefixes and trained to predict teacher-style
+continuations — same exposure as SFT, just with KL instead of CE on
+top.
+
+### M26's stacked failure modes
+
+Sample HE generation (post-train, no fences stripped):
+
+```
+    for i in range(len(numbers)):
+        for j in range(i + 1, len(numbers)):
+            if abs(numbers[i] - numbers[j]) < threshold:
+                return True
+    return False
+
+# Test the function with the provided test cases
+assert has__close__elements([1.0, 2.0, 3.0], 0.5) == False
+assert has__close__elements([1.0, 2.8, 3.0, 4.0, 5.0, 2.0], 0.3) == True
+```
+
+Two pathologies:
+
+1. **Style shift (same as SFT)**: trailing markdown, `assert` lines
+   after function body, verbose explanatory prose. Identical pattern
+   to M21–M25 SFT collapses.
+2. **NEW — projection-ambiguity identifier mangling**:
+   `has__close__elements` (double underscore), `separate__paren__groups`
+   etc. With 81 % of teacher tokens being multi-piece in student
+   vocab, `first_token` projection chops them inconsistently
+   (teacher's `_close` re-encodes to `_cl` + `ose` in student vocab,
+   we KL-match against `_cl` only). Across many positions this
+   teaches the student a corrupted naming convention that real code
+   never uses.
+
+### Implication for the prescription
+
+The **Prescription** section above lists "Off-policy KL with cached
+teacher logits" as a viable recipe. **M26 invalidates this for
+cross-vocab.** Strike it from the menu. Updated viability matrix:
+
+| Recipe | Cross-vocab? | Status |
+|---|---|---|
+| On-policy KL (M6b) | ✅ | Works (53 % ceiling, recipe-floor) |
+| Same-vocab SFT (M16) | N/A — same vocab only | Works (58.5) |
+| Off-policy KL on cache (M26) | ❌ | Collapsed (3.7) |
+| GRPO+KL hybrid (M27, in progress) | ✅ planned | Untested — student samples on-policy, KL is aux against cache |
+
+The only structural fix for off-policy cross-vocab would be:
+- Multi-token-aware projection (sum log-probs over all sub-pieces of
+  each teacher token, not just first_token), and
+- Filter the cached corpus to exclude teacher-style chatter
+  (markdown, asserts, test functions) before KL training,
+- AND mix in same-vocab-style anchor data so the conditioning prefixes
+  resemble student-base output, not teacher-style text.
+
+Open question whether all three together would beat M6b. M27 sidesteps
+this entirely by going back to on-policy sampling.
+
 ## Six runs, one lesson
 
 | Run | Recipe variation | HE | Failure mode |
@@ -142,6 +219,7 @@ Added to `docs/SMOKE_PROCEDURE.md`:
 | M25 | Fix A func-sig + cleaned | 22.6 | Style shift survives data cleaning |
 | **M16** | same-vocab DS-Coder + SFT | **58.5** | (works because teacher style ≈ student style) |
 | **M6b** | cross-vocab Qwen + on-policy KL | **53.0** | (works because student keeps own style) |
+| M26 | cross-vocab Qwen + off-policy KL on cache | **3.7** | (off-policy KL on teacher text = SFT-class style ingestion + identifier mangling) |
 
 The only recipes that don't collapse are the ones that don't ingest
 cross-vocab teacher style as training text. Lesson learned the hard
