@@ -121,6 +121,7 @@ cross-tokenizer-distill/
 │   ├── projection.py      # project teacher dist → student vocab space
 │   ├── losses.py          # KL/JSD/MSE/ULD-style losses on projected dist
 │   ├── precompute.py      # standalone teacher-cache builder
+│   ├── util.py            # teacher-token blacklist (thinking-mode masking, etc.)
 │   └── trainer_hooks.py   # generic compute_loss override
 ├── adapters/
 │   ├── transformers.py    # HF Trainer plug-in (drop-in)
@@ -134,9 +135,12 @@ cross-tokenizer-distill/
 │   └── validation/        # the small-models proof-of-concept (see docs/VALIDATION.md)
 ├── tests/
 └── docs/
-    ├── DESIGN.md          # alignment math, projection semantics, loss derivations
-    ├── VALIDATION.md      # small-models experiment plan and results
-    └── INTEGRATION.md     # how to wire CTD into your training loop
+    ├── DESIGN.md                  # alignment math, projection semantics, loss derivations
+    ├── VALIDATION.md              # small-models experiment plan and results
+    ├── INTEGRATION.md             # how to wire CTD into your training loop
+    ├── TEACHER_TOKEN_MASKING.md   # ban specific teacher tokens (thinking-mode etc.)
+    ├── STYLE_SHIFT_ISSUE.md       # postmortem: cross-vocab SFT/off-policy KL collapse
+    └── TEACHER_REFERENCE.md       # reported HE/MBPP scores for teacher candidates
 ```
 
 ## Validation plan (before any production use)
