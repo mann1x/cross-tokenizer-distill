@@ -242,10 +242,24 @@ All same-vocab on-policy FKL on the 374-prompt MBPP-train corpus, sequential.
 | ID | Knob | Status | HE-164 | MBPP-378 |
 |---|---|---|---|---|
 | **M9** | `lr 2e-5, ep 2, rank 16` | done | **53.7** | **60.1** |
-| M10 | `lr 1e-5, ep 2, rank 16` | training | — | — |
-| M11 | `lr 5e-5, ep 1, rank 16` | queued | — | — |
-| M13 | `lr 5e-5, ep 2, rank 16, T=2.0` | queued | — | — |
-| M14 | `lr 2e-5, ep 1, rank 16` | queued | — | — |
+| M10 | `lr 1e-5, ep 2, rank 16` | done | **56.7** | **60.6** |
+| M11 | `lr 5e-5, ep 1, rank 16` | skipped (M15 priority) | — | — |
+| M13 | `lr 5e-5, ep 2, T=2.0` | skipped (M15 priority) | — | — |
+| M14 | `lr 2e-5, ep 1, rank 16` | skipped (M15 priority) | — | — |
+| **M15** | `lr 5e-5, ep 2, +anchor λ=0.5 T=2.0 dense` | done | **57.3** | **61.1** |
+| **M15b** | M15 + hybrid α=0.6 (FKL+RKL) | done | **56.7** | **61.1** |
+| **M15c** | M15 + λ_anchor=1.0 (stronger anchor, pure FKL) | done | **51.2** | **60.6** |
+| **M16** | SFT on teacher completions (DS-Coder-6.7B, T=0.7) | done | **58.5** | **60.3** |
+| **M17** | M16 + frozen-base anchor (λ=0.5, FKL, dense) | done | **57.9** | **60.8** |
+| **M18** | cross-vocab on-policy KL + `student_offset` (KL family, dense + suffix-reencode) | done | **31.1** | ~35 |
+| **M21** | cross-vocab SFT on **Qwen2.5-Coder-7B-Instruct** mnt=128 | done — module rewrite, breaks HE concat | **32.3** | 39.2 |
+| **M21b** | cross-vocab SFT on **Qwen2.5-Coder-7B (BASE)** mnt=256 | done — `pass`-stub training | **0.0** | 36.5 |
+| **M21c** | M21b but mnt=768 | done — same `pass`-stub (Qwen-base hits natural EOS at 70 tokens) | **0.6** | 33.9 |
+| **M22** | Fix B: SFT on Qwen-Inst + mixed corpus (374 MBPP-train + 1471 synth HE-style) | done — synth-HE polluted student into module-rewriter mode | **14.0** | **38.6** |
+| _cache_qwen_mixed_ | `cache_teacher/qwen25c7b_inst_mixed_v1_topk128.pt` (291 MB, n=1845, top-K=128) | student-agnostic; usable for future KL distill | — | — |
+| **M23** | SFT on Qwen-Inst + clean MBPP-only (train+val+prompt = 474) | gen done, train+eval pending | — | — |
+| _cache_qwen_mbpp_tvp_ | `cache_teacher/qwen25c7b_inst_mbpp_tvp_topk128.pt` | student-agnostic | — | — |
+| **M24** | SFT on Qwen-Inst + multi-source corpus (MBPP×3 + CodeAlpaca-500 + CodeContests-500 = 2422) | corpus built (`m24_corpus.jsonl`), pending M23 verdict | — | — |
 
 **M9 verdict:** lower LR alone (5e-5 → 2e-5) did NOT break the recipe-family
 ceiling. HE 53.7 sits +0.7 pp above M6b/M8 (53.0) but still −6.1 vs base.
@@ -321,17 +335,93 @@ Knobs 1-5 keep the small-models loop fast (~2.5 h per recipe = HE-164 +
 MBPP-378). Knob 6 is the obvious scale-up once any of 1-5 produces a
 recipe that beats base on DS-Coder-1.3B.
 
+## Synthesis — M9-M22 final state (2026-05-06)
+
+Two new families explored after the M3-M8 floor was established.
+
+**Anchor-loss family (M15/M15b/M15c/M17)** — frozen-base FKL anchor on
+top of distillation/SFT. Addresses the "catastrophic forgetting"
+hypothesis. Result: **anchor restores MBPP to base (61.1) but HE
+remains 1-3 pp under base**. Stronger anchor (M15c λ=1.0) hurts.
+Hybrid FKL+RKL anchor (M15b) ≈ pure FKL anchor. Best of family:
+M15 at HE 57.3 / MBPP 61.1.
+
+**SFT-on-teacher family (M16/M21/M22)** — train student with causal-LM
+CE on teacher's free generations. Same-vocab DS-Coder teacher (M16)
+is the best single recipe to date (HE 58.5 / MBPP 60.3) — ~1 pp under
+base on both axes. Cross-vocab Qwen-Instruct teacher (M21) collapsed
+because Qwen rewrites docstring-prompts as fresh modules; the student
+learns "module rewriter" mode and breaks HE eval. Qwen-base teacher
+(M21b/c) collapsed because Qwen-base writes function stubs ending in
+`pass` then EOSes early. Mixed-corpus Fix B (M22) collapsed because
+the synthetic HE-style prompts had Qwen completions with
+`if __name__ == "__main__":` test-runner appendages that polluted the
+student into module-rewriter mode worse than M21.
+
+**Headline scoreboard (best HE in series, MBPP runner-up):**
+
+| recipe | family | HE | MBPP |
+|---|---|---:|---:|
+| base DS-Coder-1.3B-Instruct | — | 59.8 | 61.1 |
+| **M16** SFT-on-DS-Coder-teacher | SFT same-vocab | **58.5** | 60.3 |
+| **M17** M16 + λ=0.5 anchor | SFT + anchor | 57.9 | 60.8 |
+| **M15** anchor on FKL on-policy | KL same-vocab + anchor | 57.3 | **61.1** |
+| M6b on-policy KL byte_anchor first_token | KL cross-vocab | 53.0 | 53.2 |
+| M21 SFT on Qwen-Inst | SFT cross-vocab | 32.3 | 39.2 |
+| M18 KL on-policy student_offset | KL cross-vocab dense | 31.1 | ~35 |
+| M22 SFT mix-corpus (synth-polluted) | SFT cross-vocab mixed | 14.0 | 38.6 |
+| M21b/c SFT on Qwen-base | SFT cross-vocab | 0.0/0.6 | ~35 |
+
+**Cross-vocab via SFT-on-teacher is dead** in this corpus regime — both
+Qwen-Instruct (rewrites) and Qwen-base (`pass` stubs) produce text that
+trains the student into the wrong output shape. Only **on-policy KL**
+survives because the student never sees teacher's free generations
+(M6b retains 53 % cross-vocab); but on-policy KL is itself capped by
+recipe-family floor and projection cost.
+
+**M23/M24 in flight** — hypothesis: training corpus shape was the
+problem, not the SFT loss. M23 = MBPP-only (474 real prompts, no
+synth). M24 = M23×3 multi-completion sampling + 500 CodeAlpaca + 500
+CodeContests (2422 total clean prompts).
+
+**Teacher logit caches** built and saved (student-agnostic, reusable
+across student variants):
+
+- `cache_teacher/qwen25c7b_inst_mixed_v1_topk128.pt` (291 MB, n=1845)
+- `cache_teacher/qwen25c7b_inst_mbpp_tvp_topk128.pt` (~150 MB, n=474)
+
+These enable future M2x experiments to layer KL distillation on top
+of SFT without re-running teacher inference. Schema documented in
+`gen_teacher_completions.py` (see `--cache-output`,
+`--cache-logits-topk`, `--cache-logits-topp` flags).
+
 ## Reproduction
 
 All runs are checked into `experiments/validation/`:
 
 - `05_train.py` — vanilla SFT trainer (used for `SFT_mbpp_train` baseline).
 - `06_train_onpolicy.py` — same-vocab on-policy distill (used for M3/M4/M5).
-- `06_train_onpolicy_xv.py` — cross-vocab on-policy distill (used for M6).
-- `06_eval.py` — SQLite-cached, resumable HE+MBPP eval with per-problem timeouts.
-- `data/mbpp_train_prompts.jsonl` — 374 HE-style docstring prompts derived from MBPP train.
-- `data/mbpp_train_sft.jsonl` — same prompts + reference solutions for SFT.
+- `06_train_onpolicy_xv.py` / `06_train_onpolicy_xv_b.py` / `06_train_onpolicy_xv_c.py`
+  — cross-vocab on-policy distill (M6/M6b/M18). `_c` variant uses
+  `student_offset` alignment with suffix-reencode.
+- `06_train_onpolicy_anchor.py` — same-vocab on-policy distill + frozen-base
+  anchor (M15/M15b/M15c).
+- `06_train_sft_on_teacher.py` — SFT on teacher-generated completions
+  (M16/M21/M21b/M21c/M22/M23/M24).
+- `06_train_sft_anchor.py` — SFT-on-teacher + frozen-base anchor (M17).
+- `gen_teacher_completions.py` — runs teacher inference on a prompt
+  corpus, writes text completions JSONL + optional student-agnostic
+  top-K/top-P teacher logit cache (`.pt`).
+- `06_eval.py` — bs=1 SQLite-cached eval (legacy, used through M17).
+- `06_eval_batched.py` — batched generation (`--batch-size N`,
+  `--max-new-tokens M`); same SQLite schema (cross-compatible). bs=64
+  measured fastest on 46 GB GPU.
+- `data/mbpp_train_prompts.jsonl` — 374 MBPP-train docstring prompts.
+- `data/mbpp_mixed_v1.jsonl` — 1845 mixed (374 MBPP + 1471 synth HE-style).
+  **Pollutes SFT — do not use without filtering, see M22.**
+- `data/mbpp_train_val_prompt.jsonl` — 474 MBPP train+val+prompt (clean).
+- `data/m24_corpus.jsonl` — 2422 multi-source (MBPP×3 + CodeAlpaca + CodeContests).
 
-All result DBs are SQLite — `sqlite3 results/full_sft/<NAME>_HE164.db
+All result DBs are SQLite — `sqlite3 results/full_sft/<NAME>_HE_MBPP.db
 'SELECT task, COUNT(*), SUM(passed), ROUND(100.0*SUM(passed)/COUNT(*),1) FROM results GROUP BY task'`
 reproduces every number above.
