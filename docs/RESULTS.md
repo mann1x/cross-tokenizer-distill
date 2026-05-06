@@ -360,47 +360,99 @@ the synthetic HE-style prompts had Qwen completions with
 `if __name__ == "__main__":` test-runner appendages that polluted the
 student into module-rewriter mode worse than M21.
 
-**Headline scoreboard (best HE in series, MBPP runner-up):**
+## EVAL BUG FOUND + FIXED — 2026-05-06 18:50 UTC (corrected scoreboard below)
+
+**Critical correction**: between M21 and M30, all evals using
+`06_eval_batched.py` were affected by a bug in `strip_markdown_fences()`
+that called `s.strip()` on the model's generation. For models whose
+generation was an indented function BODY (continuation of the prompt's
+`def`), `.strip()` removed the leading 4-space indent on the first
+line, which then concatenated with the prompt's `def`-header to
+produce malformed Python (IndentationError, "return outside function").
+
+Diagnosis path: ran a base-only HE-20 smoke through the same script
+and got 0.0% (vs expected ~90% on first-20). Fix: change `.strip()`
+→ `.rstrip()`. After fix, base smoke = 90%. Re-evaluated all
+adapters in `runs/onpolicy/` against the fixed script.
+
+The bug only affected runs where model emitted indented BODY (M6b
+family — on-policy KL, GRPO, Mobius variants — and base). It did
+NOT affect runs where model emitted a complete `def`-from-scratch
+(M16 same-vocab SFT and the M21-M25 cross-vocab SFT collapses are
+real because the model emitted full `def`s with garbage). M6b's
+53.0/53.2 used the older bs=1 `06_eval.py` (different scorer
+entirely) and is also unaffected.
+
+**CORRECTED scoreboard (post-bug-fix):**
 
 | recipe | family | HE | MBPP |
 |---|---|---:|---:|
 | base DS-Coder-1.3B-Instruct | — | 59.8 | 61.1 |
-| **M16** SFT-on-DS-Coder-teacher | SFT same-vocab | **58.5** | 60.3 |
+| **M16** SFT-on-DS-Coder-teacher | SFT same-vocab | **58.5** | **60.3** |
 | **M17** M16 + λ=0.5 anchor | SFT + anchor | 57.9 | 60.8 |
 | **M15** anchor on FKL on-policy | KL same-vocab + anchor | 57.3 | **61.1** |
+| **M25** SFT funcsig (Qwen-Inst) | SFT cross-vocab | **55.5** | 39.9 |
 | M6b on-policy KL byte_anchor first_token | KL cross-vocab | 53.0 | 53.2 |
+| M25-clean SFT funcsig stripped | SFT cross-vocab clean | 52.4 | 38.9 |
+| M29 Filtered SFT (DeepSeek-style filter) | SFT cross-vocab + filter | 51.8 | 36.0 |
+| M18 KL on-policy student_offset | KL cross-vocab dense | 51.8 | 35.4 |
+| M23 SFT MBPP train+val+prompt | SFT cross-vocab clean | 50.6 | 37.3 |
+| M27 GRPO+KL Distill (NAIVE — teacher-LL reward) | GRPO + on-policy KL cross-vocab | 47.0 | 33.6 |
+| M31 2-stage curriculum (M16 SFT init → M6b xv-KL) | Curriculum | 46.3 | 39.9 |
+| M30 M6b + Mobius logit-clip 15 | KL cross-vocab + clip | 41.5 | 20.4 |
 | M21 SFT on Qwen-Inst | SFT cross-vocab | 32.3 | 39.2 |
-| M18 KL on-policy student_offset | KL cross-vocab dense | 31.1 | ~35 |
+| M26 KL-on-cache off-policy (Qwen-Inst funcsig) | KL cross-vocab off-policy | 23.2 | 0.8 |
 | M22 SFT mix-corpus (synth-polluted) | SFT cross-vocab mixed | 14.0 | 38.6 |
 | M21b/c SFT on Qwen-base | SFT cross-vocab | 0.0/0.6 | ~35 |
-| M26 KL-on-cache off-policy (Qwen-Inst funcsig) | KL cross-vocab off-policy | **3.7** | **0.8** |
-| M27 GRPO+KL Distill (NAIVE — teacher-LL reward) | GRPO + on-policy KL cross-vocab | 18.3 | 33.6 |
-| M28 GRPO+KL Distill (verified exec reward) | GRPO + on-policy KL cross-vocab | _in flight_ | _in flight_ |
+| M28 GRPO+KL Distill (verified exec reward, K=4) | GRPO + on-policy KL cross-vocab | killed @ step 30 | _signal too sparse — K=4 not enough_ |
+| M32 M6b on bigger corpus (mixed_v1 1845) | KL cross-vocab + data | _in flight_ | _in flight_ |
+| M33 M6b multi_token=distribute | KL cross-vocab + projection | _queued_ | _queued_ |
+| M34 M6b LoRA rank=64 | KL cross-vocab + capacity | _queued_ | _queued_ |
 
-**Cross-vocab via SFT-on-teacher is dead** in this corpus regime — both
-Qwen-Instruct (rewrites) and Qwen-base (`pass` stubs) produce text that
-trains the student into the wrong output shape. Only **on-policy KL**
-survives because the student never sees teacher's free generations
-(M6b retains 53 % cross-vocab); but on-policy KL is itself capped by
-recipe-family floor and projection cost.
+**Headline reframe (after fix):**
 
-**M27 update (2026-05-06): naive GRPO+KL Distill variant collapsed at
-HE 18.3 / MBPP 33.6.** Recipe: K=4 on-policy samples per prompt,
-**reward = teacher log-likelihood of the sampled student tokens**
-(cross-vocab projected), group-relative GRPO advantage, frozen-base
-KL anchor (λ=0.1), teacher-distill KL aux (λ=0.5). Train metrics looked
-clean throughout (reward std 0.10-0.33 — advantage actually
-discriminating; kl_ref bounded at ~0.23; distill stable in M6b range).
-But generation collapsed: outputs include Chinese fullwidth punctuation
-`（` `：` (U+FF08, U+FF1A), mathematical Unicode `𝟏` (U+1D7CF),
-IndentationErrors, NameErrors. The reward signal **literally
-incentivizes "what teacher would say"** — and the teacher (Qwen-Inst)
-says verbose-Markdown-with-CJK-punctuation in its high-likelihood
-samples. **Lesson: teacher-LL-as-reward is the wrong reward for
-cross-vocab GRPO** — it pulls student into teacher's output style.
-The framework is fine; the reward choice was wrong (chosen because
-teacher LL is "free" — same forward as the KL term — but free is the
-wrong price when the signal teaches the wrong style).
+- **Cross-vocab CTD HE ceiling sits at ~51-55 %** with multiple
+  recipes converging there: M25 (55.5), M6b (53.0), M25-clean (52.4),
+  M29 (51.8), M18 (51.8), M23 (50.6). Both filter-SFT and on-policy
+  KL families work; either path lands within 5 pp of M16's same-vocab
+  58.5%.
+- **MBPP is the harder dimension** — every cross-vocab recipe sits
+  at 35-40% MBPP vs M6b's 53.2 and M16's 60.3. The MBPP gap is the
+  outstanding problem, not HE.
+- **M25 is now the cross-vocab HE leader** (55.5 / 39.9). The recipe:
+  SFT on Qwen-Inst funcsig prompts (Fix A), no extra cleaning, lr=5e-5,
+  ep=2, rank=16. Surprisingly mundane recipe; the prior 22.6/38.9
+  verdict was eval-bug noise.
+- **All "destabilization" claims about M30/M31** (Mobius clipping,
+  2-stage curriculum) **were eval-bug artifacts**. M30 does cost ~10pp
+  HE and ~30pp MBPP vs M6b — real but not catastrophic. M31 lost
+  ~12pp HE / ~20pp MBPP from M16 init — moderate regression, not
+  collapse.
+
+**Original (broken) scoreboard for record:** the rows shown for
+M26-M31 use the corrected numbers; the original broken numbers were
+M26 3.7/0.8, M27 18.3/33.6, M29 36.6/36.0, M30 4.9/20.4, M31 6.1/39.9.
+HE numbers under-reported by 15-40pp due to the strip-bug.
+
+**Cross-vocab via SFT-on-teacher works after all** (post-bugfix) —
+the "dead" verdict was eval-bug noise. M25 SFT funcsig (55.5 HE) and
+M25-clean (52.4 HE) and M23 MBPP-tvp (50.6) all converge into the
+51-55 HE range, matching the on-policy KL family. M21 (32.3 HE) and
+M22 (14.0 HE) remain real failures because their corpora had
+syntactic pollution (test-runner appendages on synthetic HE-style
+prompts) that Fix A and the M23/M25 cleanup avoided.
+
+**M27 update (CORRECTED post-bugfix): GRPO+KL Distill (naive
+teacher-LL reward) lands HE 47.0 / MBPP 33.6** — within striking
+distance of M6b (53.0/53.2). Recipe: K=4 on-policy samples per prompt,
+reward = teacher log-likelihood, group-relative advantage, KL anchor
+λ=0.1, teacher-distill KL aux λ=0.5. The original 18.3 verdict was
+eval-bug noise; the recipe actually runs. Some style drift IS visible
+(higher rate of CJK/math Unicode in outputs vs M6b — confirmed in
+sample inspection) but it doesn't catastrophically break exec, just
+costs ~6pp HE vs M6b. M28 (verified-exec reward) remains the right
+next move for breaking 53%, not because M27 is "broken" but because
+verified rewards are still cleaner per first principles.
 
 **M28 = GRPO+KL Distill with the CORRECT reward**: verified exec
 reward (1.0 if `exec(prompt+completion+test)` passes, else 0.0). Same
