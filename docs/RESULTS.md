@@ -260,6 +260,8 @@ All same-vocab on-policy FKL on the 374-prompt MBPP-train corpus, sequential.
 | **M23** | SFT on Qwen-Inst + clean MBPP-only (train+val+prompt = 474) | done — confirms it's NOT synth pollution; Qwen-Inst module-rewrite is the killer | **29.9** | **37.3** |
 | _cache_qwen_mbpp_tvp_ | `cache_teacher/qwen25c7b_inst_mbpp_tvp_topk128.pt` (69 MB) | student-agnostic; usable for future KL distill | — | — |
 | **M24** | SFT on Qwen-Inst + multi-source corpus (MBPP×3 + CodeAlpaca-500 + CodeContests-500 = 2422) | **cancelled** — M23 proved corpus size won't fix the rewrite behavior | — | — |
+| **M25** | Fix A (reformat MBPP→func-sig) + cleaned completions (87% stripped of fences/asserts) | done — student STILL emits `def test_*():\nassert...` after body (Qwen-style bleeds through despite stripped data) | **22.6** | **38.9** |
+| _smoke procedure_ | `docs/SMOKE_PROCEDURE.md` (4-check) caught M25 fence pollution before train; cleaned corpus fixed data but not student style shift | — | — | — |
 
 **M9 verdict:** lower LR alone (5e-5 → 2e-5) did NOT break the recipe-family
 ceiling. HE 53.7 sits +0.7 pp above M6b/M8 (53.0) but still −6.1 vs base.
