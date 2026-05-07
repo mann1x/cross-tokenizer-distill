@@ -132,11 +132,14 @@ def main():
     out = Path(args.output_dir); out.mkdir(parents=True, exist_ok=True)
 
     print(f"[sft] student={args.student}", flush=True)
-    tok = AutoTokenizer.from_pretrained(args.student)
+    # trust_remote_code=True: required for DS-Coder-V2-Lite (and other custom-modeling
+    # checkpoints). DS-Coder-1.3B / Qwen2.5-Coder ignore the flag, so it's safe to default ON.
+    tok = AutoTokenizer.from_pretrained(args.student, trust_remote_code=True)
     if tok.pad_token is None: tok.pad_token = tok.eos_token
 
     print("[sft] loading student (bf16)...", flush=True)
-    student = AutoModelForCausalLM.from_pretrained(args.student, torch_dtype=torch.bfloat16, device_map={"": "cuda"})
+    student = AutoModelForCausalLM.from_pretrained(args.student, torch_dtype=torch.bfloat16,
+                                                    device_map={"": "cuda"}, trust_remote_code=True)
 
     lora = LoraConfig(r=args.lora_rank, lora_alpha=args.lora_rank*2, target_modules="all-linear",
                       bias="none", task_type="CAUSAL_LM")
