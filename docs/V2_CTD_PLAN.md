@@ -349,3 +349,27 @@ for both tracks but is now a +bonus rather than a rescue.
   without recurrence even needing to add value, then any T=8 win is upside.
 - Sanity check first: re-run M37c recipe on DSC-V2-Lite at small scale (1 epoch, eval) before
   committing to Mythic-RDT recurrence wrap.
+
+## Council follow-up `csl-2026-05-07-2337-601f` — verdict & Phase 3B (2026-05-07 21:37 UTC)
+
+5-question follow-up answered in 159 s (gemma4:31b-cloud researcher + glm-5.1:cloud critic + gemma4:31b-cloud synthesizer):
+
+1. **M37c → DSC-V2-Lite: YES**. Cross-vocab SFT has no projection noise / alignment risk. Lowest-risk path to 80.6 target. If Δ holds, recurrence becomes "polishing pass" not "recovery mission."
+2. **M44 hard-prompt mining is the right move**. For rank-16 LoRA on 1B models, primary bottleneck is **capacity, not convergence**. Curriculum learning is for stability in pre-training; hard-prompt mining is for **efficiency in capacity-constrained distillation**. Trivial pass=1 examples waste parameter updates.
+3. **QC-1.5B HE push: "Style → Logic" 2-epoch transition (M45)**:
+   - Epoch 1: full-loss SFT (no mask) — absorb teacher chat-style + format
+   - Epoch 2: code-only-mask SFT — refine logic without further drift
+   - Prevents cold-start where mask cuts off the very tokens needed to learn the chat-format.
+4. **Instrumentation gaps**:
+   - **Mask density** (n_valid / n_unmasked-cont). <0.20 → "mask too aggressive → flat results" (vs genuine plateau).
+   - Extractor: `findall()[-1]` was ~1-2pp HE lift (already shipped `b499c36`).
+5. **M39 on-policy KL: NO**. Don't revive until SFT hits hard plateau (ΔHE < 1.0). Infrastructure overhead not worth the budget.
+
+### Phase 3B launched (M45 series)
+
+- **M45c**:  QC-1.5B (sv) + funcsig + 2-epoch style→logic. Headline target: HE+ AND MBPP+ vs M41c (+0.6 / +3.4).
+- **M45cd**: DSC-1.3B (xv) + funcsig + 2-epoch style→logic. Cross-vocab control vs M37c (+6.1 / +0.3).
+
+Trainer wired with `--code-only-mask-from-epoch 2` (commit `3c8a336`). Mask-density logging emits `mask_density=X.XX` every `--logging-steps`.
+
+Driver `/tmp/run_v2_phase3b_m45.sh` running on pod (PID 220094, idle-barrier sequenced after Phase 3). Same log `/tmp/v2_phase3.log` so monitor `bnz201ld1` catches it.
