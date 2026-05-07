@@ -373,3 +373,45 @@ for both tracks but is now a +bonus rather than a rescue.
 Trainer wired with `--code-only-mask-from-epoch 2` (commit `3c8a336`). Mask-density logging emits `mask_density=X.XX` every `--logging-steps`.
 
 Driver `/tmp/run_v2_phase3b_m45.sh` running on pod (PID 220094, idle-barrier sequenced after Phase 3). Same log `/tmp/v2_phase3.log` so monitor `bnz201ld1` catches it.
+
+## Phase 3 / 3B early results + bug-105 (2026-05-08 00:21 UTC)
+
+**M42** (DSC + COMBINED 848 prompts + code-only-mask) — REGRESSED:
+- HE 59.1 / MBPP 41.3 — vs M37c 62.2/41.3 = -3.1 HE, no MBPP gain.
+- Combined corpus halved HE gain. Two likely causes: (1) effective lr-schedule overshoot
+  (106 optim steps vs 58 for single-corpus, same lr → 2× total gradient), (2) cross-corpus
+  format variance (signature-then-impl vs question-then-explain-then-impl) the mask doesn't
+  suppress.
+
+**M45c** (QC-1.5B + funcsig + Style→Logic 2-epoch) — REGRESSED vs M41c:
+- HE 59.1 / MBPP 46.8 — vs M41c 64.0/48.4 = -4.9 HE, -1.6 MBPP.
+- **Council hypothesis disproved for QC-1.5B same-vocab**: epoch 1 full-loss SFT pulled the
+  student HARDER into chat-bot prose; epoch 2 mask couldn't pull it back. M41c
+  (mask-from-epoch-1) was actually preventing the absorption in the first place — that's
+  what gave it the +0.6 HE.
+- Awaiting M45cd (DSC cross-vocab variant) for the cross-vocab control.
+
+**Bug-105**: scp-overwriting an in-flight bash script kills it. Phase 3 driver crashed at
+line 102 after M42 eval completed because I scp'd `/tmp/run_v2_phase3.sh` while bash was
+mid-read (between M42 and M44 steps). Bash reads scripts lazily by file offset; the rewrite
+shifted byte positions, so bash continued reading from offset ~3KB into the NEW content:
+
+```
+ut: command not found       (mid-byte of "out")
+DB: unbound variable
+syntax error near unexpected token `}'
+```
+
+M44 + M42q never started. Phase 3C recovery driver (separate file `/tmp/run_v2_phase3c_recovery.sh`)
+launched on pod (PID 222695, idle-barrier sequenced after M45cd). Hard corpus already exists
+on disk from the in-flight rebuild (199 prompts), so M44 just consumes it.
+
+**Lesson**: NEVER scp-overwrite a bash script that's currently being read by an active
+process. Either write a separate file, or copy to a different path then move atomically with
+`mv` (still risky if bash's offset is past the move boundary).
+
+## Phase 3C (M44 + M42q recovery) launched (00:21 UTC)
+
+Same recipe as Phase 3 originally specified — separate file, no overwrite risk:
+- **M44**: DSC + HARD subset (199 prompts where DSC base fails) + code-only-mask r=16.
+- **M42q**: QC-1.5B + COMBINED (848 prompts) + code-only-mask r=16.
