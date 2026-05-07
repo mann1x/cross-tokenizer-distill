@@ -94,6 +94,8 @@ Teacher logit caches not needed: only on-policy KL (M39) requires teacher logits
 
 **Path C decision (2026-05-07)**: chat template on the teacher side only; cross-vocab on-policy KL (M36) dropped because there's no clean way to bridge two different chat templates in on-policy training across vocabs. The cross-vocab track becomes SFT-only; same-vocab gets the on-policy KL slot.
 
+**Suffix re-encoding (2026-05-07)**: cross-vocab `06_train_onpolicy_xv_v2.py` historically dropped every alignment entry where teacher and student byte-offsets didn't coincide (cross-vocab boundary mismatch — ~10-30% of positions for unrelated tokenizer families). Plumbing was present in `build_alignment(mode='student_offset', suffix_reencode=True)` but the trainer skipped them. New flag `--suffix-reencode-teacher` (commit 489a81f, opt-in) runs a chunked auxiliary teacher forward on `teacher_prefix + suffix_tokens` and uses the FINAL logit as the distill target, recovering the dropped positions at ~1.3-1.5× teacher cost. **Validation (task #109): A/B smoke on DS-Coder-1.3B + QC-7B-Inst after Phase 1+2 lands; on pass, flip default ON and add M37b/M38b cross-vocab follow-ups.** No-op for same-vocab (IdentityMapper, M39).
+
 The point of v2 is the **A/B comparison between two students at the same recipes with the same teacher artifacts (chat-mode completions/logits)**. Same teacher (QC-14B NF4 chat), same corpora, same hyperparams within a row.
 
 | Recipe | v1 ancestor | **Student A — DS-Coder-1.3B-Inst** (cross-vocab via VocabMapper first_token) | **Student B — Qwen2.5-Coder-1.5B-Inst** (same-vocab, no mapper) |
