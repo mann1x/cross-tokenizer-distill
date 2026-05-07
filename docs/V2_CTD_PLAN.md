@@ -415,3 +415,47 @@ process. Either write a separate file, or copy to a different path then move ato
 Same recipe as Phase 3 originally specified — separate file, no overwrite risk:
 - **M44**: DSC + HARD subset (199 prompts where DSC base fails) + code-only-mask r=16.
 - **M42q**: QC-1.5B + COMBINED (848 prompts) + code-only-mask r=16.
+
+## Phase 3 FINAL — M42q wins QC HE; M37c still DSC headline (2026-05-08 00:58 UTC)
+
+| Recipe | Student | Data | Mask | Rank | HE | MBPP | dHE | dMBPP | Verdict |
+|---|---|---|---|---:|---:|---:|---:|---:|---|
+| **M37c**  | DSC1.3B xv | funcsig (474)        | ON  | 16 | 62.2 | 41.3 | +6.1 | +0.3 | DSC headline ✓ |
+| M44       | DSC1.3B xv | HARD mbpp_train (199)| ON  | 16 | 62.8 | 39.4 | **+6.7** | -1.6 | best HE δ, MBPP- |
+| M42       | DSC1.3B xv | COMBINED (848)       | ON  | 16 | 59.1 | 41.3 | +3.0 | +0.3 | regressed M37c |
+| M45cd     | DSC1.3B xv | funcsig style→logic  | ep2 | 16 | 61.0 | 22.2 | +4.9 | **-18.8** | MBPP catastrophe |
+| **M41c**  | QC1.5B sv  | funcsig (474)        | ON  | 16 | 64.0 | 48.4 | +0.6 | +3.4 | QC dual-best |
+| **M42q**  | QC1.5B sv  | COMBINED (848)       | ON  | 16 | **65.2** | 46.8 | **+1.8** | +1.8 | **NEW QC HE leader** |
+| M41bc     | QC1.5B sv  | funcsig (474)        | ON  | 64 | 60.4 | 50.3 | -3.0 | +5.3 | best MBPP, HE- |
+| M45c      | QC1.5B sv  | funcsig style→logic  | ep2 | 16 | 59.1 | 46.8 | -4.3 | +1.8 | style→logic dead |
+
+### Asymmetric corpus-effect finding
+
+Combined corpus (mbpp_train + funcsig codeonly, 848 prompts) has **opposite effects across vocabs**:
+- DSC cross-vocab: M42 regressed M37c by -3.1 HE (corpus dilution, funcsig was already at ceiling).
+- QC same-vocab: M42q **improved** M41c by +1.2 HE (corpus diversity helped, funcsig was capacity-limited by size).
+
+Working theory: cross-vocab + Path C reaches the local ceiling at smaller corpus sizes because the VocabMapper projection acts as additional regularization. Same-vocab Path C is corpus-hungry — it benefits from more code-pattern variety because the only regularization is the mask itself.
+
+### M44 (hard-prompt mining) verdict
+
++6.7 HE is the **largest HE delta in v2**, but tied with M37c within statistical noise (SE ≈ 3pp on 164 problems → +0.6 = single-problem swing). MBPP regressed -1.9 vs M37c — likely because dropping the 175 base-pass problems also removed easy MBPP-relevant patterns. Council hypothesis ("rank-16 LoRA on 1B is capacity-bound, hard mining concentrates the gradient") was correct in direction but the magnitude is within noise. **Not a breakthrough**, but confirms M37c is near the DSC ceiling for this teacher/student/data triple.
+
+### M45 style→logic verdict — REJECTED
+
+Council recipe ("epoch 1 full-loss to absorb chat-format → epoch 2 mask to refine logic") **failed for both vocabs**:
+- M45c QC sv: -4.9 HE / -1.6 MBPP vs M41c — modest regression.
+- M45cd DSC xv: HE near-OK (-1.2) but **MBPP collapsed to 22.2** (-19.1 vs M37c).
+
+The smoking gun: M45cd MBPP failures are dominated by `NameError: name 'X' is not defined` — the model produces call-and-assert lines without function definitions. Epoch 1 absorbed the chat-template pattern of "Here's how you'd test it: assert foo(x) == y" and epoch 2 mask only constrains gradient on code-fence interiors but cannot reverse the LoRA's encoded behavioral pattern. Mask-from-epoch-1 (M37c, M41c) was actively preventing this absorption — that's where its lift came from.
+
+### Final picks
+
+- **DSC headline (Mythic-RDT downstream → #115)**: **M37c** (62.2 / 41.3, +6.1 / +0.3). M44's +0.6 HE gain doesn't justify the -1.9 MBPP cost.
+- **QC headline (same-vocab line)**: **M42q** (65.2 / 46.8, +1.8 / +1.8). NEW. Beats M41c on HE while staying dual-positive.
+- **MBPP-max for QC**: M41bc (50.3, +5.3) at HE cost.
+- **Council-blessed Phase 3 recipes**: M44 = neutral, M45 = rejected. Keep mask-from-epoch-1.
+
+### Bug-105 logged
+
+scp-overwrite of in-flight bash script kills it (offset shift → garbled bytes). See `feedback_scp_overwrite_in_flight_bash.md`. Phase 3C recovery driver landed M44 + M42q cleanly (separate file, no overwrite).
