@@ -87,7 +87,7 @@ def main():
     p.add_argument("--top-p", type=float, default=0.95)
     p.add_argument("--batch-size", type=int, default=4)
     p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--quant", choices=["bf16", "nf4"], default="bf16")
+    p.add_argument("--quant", choices=["bf16", "nf4", "none"], default="bf16")
     p.add_argument("--chat-template", action="store_true",
                    help="Wrap each prompt as a user message via tokenizer.apply_chat_template before generation. "
                         "Required for instruct teachers (~+44pp MBPP for QC-7B).")
@@ -123,6 +123,8 @@ def main():
                                  bnb_4bit_compute_dtype=torch.bfloat16,
                                  bnb_4bit_use_double_quant=True)
         model = AutoModelForCausalLM.from_pretrained(args.teacher, quantization_config=bnb, device_map={"": "cuda"}, trust_remote_code=True)
+    elif args.quant == "none":
+        model = AutoModelForCausalLM.from_pretrained(args.teacher, device_map={"": "cuda"}, trust_remote_code=True)
     else:
         model = AutoModelForCausalLM.from_pretrained(args.teacher, torch_dtype=torch.bfloat16, device_map={"": "cuda"}, trust_remote_code=True)
     model.eval()

@@ -1,7 +1,7 @@
 # CTD v2 — Plan
 
 **Date drafted**: 2026-05-07
-**Status**: Path C confirmed 2026-05-07. Patches landed: `gen_teacher_completions.py --chat-template`. Remaining: extend `06_eval_batched.py` for chat-template eval; relaunch Phase 0.
+**Status**: Path C confirmed 2026-05-07. **Phase 0 v2 DONE 2026-05-07 16:17 UTC** — NF4 teacher cache built (9.3 GB), bs-ramp identified knee at bs=32 / saturation at bs=64 (0.244 prompts/s for QC-14B NF4 chat), teacher completions regenerated at max_new=1024 with clean length-cap audit (0/374 + 0/474 hit cap, max=749/704), all 4 base evals landed. Ready for Phase 1+2 dual-student matrix.
 **Supersedes**: ad-hoc M1-M35 tracking from v1.
 
 ## v1 retrospective (corrected by 2026-05-07 reeval on test split)
@@ -84,7 +84,7 @@ VRAM total: ~16-18 GB at bs=2 (12 GB teacher NF4 + 3 GB student BF16 + 1 GB LoRA
 
 1. **VRAM smoke**: 5-step training loop with QC-14B NF4 teacher + DS-Coder-1.3B BF16 student + LoRA grads at bs=2, bs=4, bs=8. Confirm fit + log peak GPU usage. Repeat with QC-1.5B student.
 2. **QC-1.5B base eval** on canonical test split (raw mode, for v1-comparable baseline) + chat mode (for v2 Phase 2 baseline). Both via patched `06_eval_batched.py`.
-3. **Teacher completions with `--chat-template`** (NF4 chat): regenerate for `mbpp_train_prompts.jsonl` (M16/M38/M40 SFT corpus) and `mbpp_funcsig_prompts.jsonl` (M25/M37/M41 SFT corpus). ~30 min each. Output: `data/mbpp_train_qwen25c14b_chat_T07.jsonl` and `data/mbpp_funcsig_qwen25c14b_chat_T07.jsonl`.
+3. **Teacher completions with `--chat-template`** (**BF16** chat — one-time gen, fidelity > speed): regenerate for `mbpp_train_prompts.jsonl` (M16/M38/M40 SFT corpus) and `mbpp_funcsig_prompts.jsonl` (M25/M37/M41 SFT corpus). ~30 min each. Output: `data/mbpp_train_qwen25c14b_chat_T07.jsonl` and `data/mbpp_funcsig_qwen25c14b_chat_T07.jsonl`. (NF4 only used for recurring teacher inference: M39 on-policy KL training and the cited "operationally relevant teacher quality" eval number.)
 4. **Patch `06_eval_batched.py`** to add `--chat-template` flag — required to evaluate chat-trained students (M39/M40/M41/M41b).
 
 Teacher logit caches not needed: only on-policy KL (M39) requires teacher logits live during training, and that's same-vocab so identity mapper. SFT recipes (M37/M38/M40/M41) only need text completions.
@@ -101,7 +101,7 @@ The point of v2 is the **A/B comparison between two students at the same recipes
 | **R1: On-policy KL** (mbpp_train_prompts, ep=2, bs=2, ga=8, lr=5e-5, rank=16; chat-template both sides) | M6b | _dropped (cross-vocab on-policy KL has no clean chat-template bridge across vocabs)_ | **M39** |
 | **R2: SFT on funcsig completions** (M25 corpus; teacher generates with chat template, student trains raw_prompt → chat_completion) | M25 | **M37** | **M41** |
 | **R3: SFT on mbpp_train completions** (M16-style; same chat-mode teacher generation) | M16 | **M38** | **M40** |
-| **Base reference** | n/a | DS-Coder-1.3B base = HE 56.1 / MBPP 41.0 (test split, raw eval) | QC-1.5B base = TBD from Phase 0 step 4 |
+| **Base reference** | n/a | DS-Coder-1.3B base = HE 56.1 / MBPP 41.0 (test split, raw eval) | QC-1.5B base raw = HE 46.3 / MBPP 41.3 ; **chat = HE 63.4 / MBPP 45.0** ← matched-code-path baseline |
 
 **The A/B comparisons** that v2 is built to answer:
 
@@ -139,7 +139,9 @@ Run on whichever student-track wins Phase 1+2 head-to-head. The decision rule:
 - All recipes evaluated on canonical MBPP test split + HE-164 with deterministic eval
 - Tab compare against:
   - DS-Coder-1.3B base (HE 56.1 / MBPP 41.0)
-  - QC-1.5B base (TBD from Phase 0 step 4)
+  - QC-1.5B base chat HE 63.4 / MBPP 45.0
+  - QC-14B NF4 chat (teacher) HE 86.0 / MBPP 74.3 — **+22.6pp HE / +29.3pp MBPP over QC-1.5B chat**, ample distillation headroom
+  - QC-7B NF4 chat (smaller-teacher A/B) HE 84.8 / MBPP 70.6 — confirms QC-14B NF4 dominates QC-7B NF4 by +1.2pp HE / +3.7pp MBPP
   - QC-7B teacher (HE 82.9 / MBPP 68.8 chat)
   - QC-14B teacher (HE 88.4 / MBPP TBD chat)
 - Pick the v2 winner for **Mythic-RDT downstream**: the recipe with the best HE+MBPP gain over base, applied to DS-Coder-V2-Lite-Instruct as the next step (CTD-pre-recurrence layer).
