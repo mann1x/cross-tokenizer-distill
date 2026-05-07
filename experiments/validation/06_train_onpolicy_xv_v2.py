@@ -27,8 +27,23 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import LoraConfig, get_peft_model
 
 sys.path.insert(0, "/workspace/cross-tokenizer-distill")
-from ctd.mapper import VocabMapper
-from ctd.alignment import build_alignment
+from ctd.mapper import IdentityMapper, VocabMapper, tokenizers_match
+from ctd.alignment import AlignmentEntry, AlignmentTable, build_alignment
+
+
+def _identity_alignment(token_ids: list[int]) -> AlignmentTable:
+    """Trivial 1:1 alignment for the same-vocab case.
+
+    student_pos == teacher_pos for every position; no dropped, no
+    suffix re-encodes. Cheaper than build_alignment by an order of
+    magnitude (no UTF-8 offset reconstruction, no dict lookups).
+    """
+    n = len(token_ids)
+    entries = [
+        AlignmentEntry(student_pos=j, valid=True, teacher_pos=j)
+        for j in range(n)
+    ]
+    return AlignmentTable(entries=entries, n_aligned=n)
 
 
 class PromptDataset(Dataset):
@@ -123,16 +138,23 @@ def main():
     if t_tok.pad_token is None: t_tok.pad_token = t_tok.eos_token
     s_tok.padding_side = "left"
 
-    Path(args.mapper_cache).parent.mkdir(parents=True, exist_ok=True)
-    if Path(args.mapper_cache).exists():
-        print(f"[xv-onpolicy-b] loading mapper from {args.mapper_cache}", flush=True)
-        cached = torch.load(args.mapper_cache, weights_only=False)
-        mapper = cached["mapper"]; cov = cached["cov"]
-    else:
-        print(f"[xv-onpolicy-b] building VocabMapper(multi_token={args.multi_token})...", flush=True)
-        mapper = VocabMapper.from_tokenizers(t_tok, s_tok, multi_token=args.multi_token)
+    same_vocab = tokenizers_match(t_tok, s_tok)
+    if same_vocab:
+        print("[xv-onpolicy-b] same-vocab detected (student tokenizer == teacher tokenizer) — "
+              "using IdentityMapper, skipping mapper cache", flush=True)
+        mapper = IdentityMapper.from_tokenizers(t_tok, s_tok)
         cov = mapper.coverage_report()
-        torch.save({"mapper": mapper, "cov": cov}, args.mapper_cache)
+    else:
+        Path(args.mapper_cache).parent.mkdir(parents=True, exist_ok=True)
+        if Path(args.mapper_cache).exists():
+            print(f"[xv-onpolicy-b] loading mapper from {args.mapper_cache}", flush=True)
+            cached = torch.load(args.mapper_cache, weights_only=False)
+            mapper = cached["mapper"]; cov = cached["cov"]
+        else:
+            print(f"[xv-onpolicy-b] building VocabMapper(multi_token={args.multi_token})...", flush=True)
+            mapper = VocabMapper.from_tokenizers(t_tok, s_tok, multi_token=args.multi_token)
+            cov = mapper.coverage_report()
+            torch.save({"mapper": mapper, "cov": cov}, args.mapper_cache)
     print(f"[xv-onpolicy-b] mapper coverage: single={cov.single_token_rate:.1%} multi={cov.multi_token_rate:.1%}", flush=True)
 
     print("[xv-onpolicy-b] loading student (bf16)...", flush=True)
@@ -206,10 +228,15 @@ def main():
                                 max_length=args.max_prompt_len)["input_ids"]
                 p_len_b = len(p_ids_s)
                 if p_len_b >= len(row_t): continue  # nothing to distill
-                text = s_tok.decode(row_t, skip_special_tokens=False)
-                teacher_ids = t_tok.encode(text, add_special_tokens=False)
-                if not teacher_ids: continue
-                align = build_alignment(text, teacher_ids, row_t, t_tok, s_tok, mode="student_offset", suffix_reencode=True)
+                if same_vocab:
+                    # Fast path: skip decode + re-encode + UTF-8 offset alignment.
+                    teacher_ids = row_t
+                    align = _identity_alignment(row_t)
+                else:
+                    text = s_tok.decode(row_t, skip_special_tokens=False)
+                    teacher_ids = t_tok.encode(text, add_special_tokens=False)
+                    if not teacher_ids: continue
+                    align = build_alignment(text, teacher_ids, row_t, t_tok, s_tok, mode="student_offset", suffix_reencode=True)
                 orig_idx.append(b)
                 student_rows.append(row_t)
                 teacher_seqs.append(teacher_ids)

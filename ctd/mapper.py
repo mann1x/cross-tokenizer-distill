@@ -351,3 +351,118 @@ class VocabMapper:
             log_topk.reshape(*leading, out_topk),
             topk_ids.reshape(*leading, out_topk),
         )
+
+
+def tokenizers_match(a: "Tokenizer", b: "Tokenizer", n_probe: int = 256) -> bool:
+    """Cheap structural identity check between two HF tokenizers.
+
+    Used by callers (notably the on-policy KL trainer) to decide whether
+    a real VocabMapper is needed or an IdentityMapper suffices. Returns
+    True only when both tokenizers agree on:
+
+      - vocab_size,
+      - pad / eos / bos token ids (when present on both),
+      - the byte/string for the first ``n_probe`` token ids.
+
+    A False answer is always safe (caller falls back to a real mapper);
+    a True answer means the two vocabularies are interchangeable for
+    KL purposes — every teacher logit lines up with the student logit
+    at the same index.
+    """
+    try:
+        if a.vocab_size != b.vocab_size:
+            return False
+    except Exception:
+        return False
+    for attr in ("pad_token_id", "eos_token_id", "bos_token_id"):
+        ai = getattr(a, attr, None)
+        bi = getattr(b, attr, None)
+        if ai is not None and bi is not None and ai != bi:
+            return False
+    n = min(n_probe, a.vocab_size)
+    try:
+        a_ids = a.convert_ids_to_tokens(list(range(n)))
+        b_ids = b.convert_ids_to_tokens(list(range(n)))
+    except Exception:
+        return False
+    return a_ids == b_ids
+
+
+class IdentityMapper:
+    """Drop-in VocabMapper replacement for the same-vocab case.
+
+    When student and teacher share a tokenizer, the projection
+    teacher_topk → student_topk is the identity. This stub matches the
+    surface API used by ``06_train_onpolicy_xv_v2.py`` (``project_topk``
+    + ``coverage_report``) and avoids the ~30 s build cost, the ~50 MB
+    cache file, and the dense V_student scatter inside ``project_topk``.
+
+    Saving a pickled instance is a no-op-friendly so the trainer's
+    cache-or-build branch keeps working unchanged.
+    """
+
+    def __init__(self, vocab_size: int):
+        self.teacher_vocab_size = vocab_size
+        self.student_vocab_size = vocab_size
+        self.strategy: MultiTokenStrategy = "strict"
+
+    @classmethod
+    def from_tokenizers(
+        cls,
+        teacher_tokenizer: "Tokenizer",
+        student_tokenizer: "Tokenizer",
+        multi_token: MultiTokenStrategy = "strict",
+        verify_roundtrip_samples: int = 0,
+        progress: bool = False,
+    ) -> "IdentityMapper":
+        if not tokenizers_match(teacher_tokenizer, student_tokenizer):
+            raise ValueError(
+                "IdentityMapper.from_tokenizers requires structurally identical "
+                "tokenizers; use VocabMapper.from_tokenizers for the cross-vocab case."
+            )
+        return cls(vocab_size=teacher_tokenizer.vocab_size)
+
+    def coverage_report(self) -> CoverageReport:
+        V = self.teacher_vocab_size
+        return CoverageReport(
+            teacher_vocab_size=V,
+            student_vocab_size=V,
+            single_token_count=V,
+            multi_token_count=0,
+            dropped_count=0,
+            avg_multi_token_fragments=1.0,
+            bytewise_roundtrip_ok=True,
+            roundtrip_failures=0,
+            strategy=self.strategy,
+        )
+
+    def project_topk(
+        self,
+        teacher_topk_values: torch.Tensor,
+        teacher_topk_indices: torch.Tensor,
+        out_topk: int = 32,
+        already_softmaxed: bool = False,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Identity passthrough — teacher top-K is already in the student vocab.
+
+        Trims to ``out_topk`` and returns log-probabilities renormalised
+        over the retained set so the result matches VocabMapper's
+        contract (a well-defined log-distribution over student indices).
+        """
+        K = teacher_topk_values.shape[-1]
+        keep = min(out_topk, K)
+        if already_softmaxed:
+            probs_K = teacher_topk_values
+        else:
+            probs_K = teacher_topk_values.softmax(dim=-1)
+        # Trim to top `keep` (teacher top-K is already sorted descending,
+        # but be defensive in case a caller passed unsorted top-K).
+        if keep < K:
+            top_vals, top_pos = probs_K.topk(keep, dim=-1)
+            top_idx = teacher_topk_indices.gather(-1, top_pos)
+        else:
+            top_vals = probs_K
+            top_idx = teacher_topk_indices
+        top_vals = top_vals.clamp(min=1e-12)
+        top_vals = top_vals / top_vals.sum(dim=-1, keepdim=True)
+        return top_vals.log(), top_idx
