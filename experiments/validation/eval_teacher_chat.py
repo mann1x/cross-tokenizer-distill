@@ -199,6 +199,7 @@ def main():
     p.add_argument("--exec-timeout", type=int, default=30)
     p.add_argument("--batch-size", type=int, default=4)
     p.add_argument("--max-new-tokens", type=int, default=8192)
+    p.add_argument("--quant", choices=["bf16", "nf4"], default="bf16")
     p.add_argument("--mask-teacher-tokens", default="",
                    help="Comma-separated token strings to ban from generation. "
                         "For non-thinking eval of reasoning teachers, leave empty "
@@ -214,11 +215,18 @@ def main():
     print(f"[teacher-eval] cache: {cache_path} | bs={args.batch_size} | mnt={args.max_new_tokens}", flush=True)
     conn = open_cache(cache_path)
 
-    print(f"[teacher-eval] loading {args.model} (bf16)...", flush=True)
-    tokenizer = AutoTokenizer.from_pretrained(args.model)
+    print(f"[teacher-eval] loading {args.model} ({args.quant})...", flush=True)
+    tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    model = AutoModelForCausalLM.from_pretrained(args.model, torch_dtype=torch.bfloat16, device_map={"": "cuda"})
+    if args.quant == "nf4":
+        from transformers import BitsAndBytesConfig
+        bnb = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4",
+                                 bnb_4bit_compute_dtype=torch.bfloat16,
+                                 bnb_4bit_use_double_quant=True)
+        model = AutoModelForCausalLM.from_pretrained(args.model, quantization_config=bnb, device_map={"": "cuda"}, trust_remote_code=True)
+    else:
+        model = AutoModelForCausalLM.from_pretrained(args.model, torch_dtype=torch.bfloat16, device_map={"": "cuda"}, trust_remote_code=True)
     model.eval()
 
     blacklist_ids = make_teacher_token_blacklist(tokenizer, args.mask_teacher_tokens, args.mask_teacher_token_ids)

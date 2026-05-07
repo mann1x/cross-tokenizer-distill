@@ -7,7 +7,7 @@ hit 3-5x wallclock speedup on under-utilized GPUs.
 """
 from __future__ import annotations
 
-import argparse, json, signal, sqlite3, sys, time
+import argparse, json, re, signal, sqlite3, sys, time
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
@@ -48,6 +48,9 @@ def _exec_with_timeout(code: str, label: str) -> tuple[bool, str]:
         signal.signal(signal.SIGALRM, old)
 
 
+THINK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
+FENCE_RE_REGEX = re.compile(r"```(?:python)?\s*\n(.*?)\n```", re.DOTALL)
+
 _FENCE_RE_PY = "```python"
 _FENCE_RE = "```"
 
@@ -58,6 +61,14 @@ def strip_markdown_fences(s: str) -> str:
     if _FENCE_RE in s: s = s.split(_FENCE_RE)[0]
     return s
 
+
+def strip_thinking(t):
+    return THINK_RE.sub("", t).strip()
+
+def extract_code_chat(t):
+    t = strip_thinking(t)
+    m = FENCE_RE_REGEX.search(t)
+    return m.group(1).strip() if m else t.strip()
 
 _HE_STOPS = ("\nclass ", "\ndef ", "\n#", "\nif __name__", "\nprint(", "\nassert ", "\n```")
 
@@ -78,16 +89,27 @@ def truncate_at_function_end(s: str) -> str:
     return s
 
 
-def score_humaneval(prob: dict, generation: str) -> tuple[bool, str]:
-    code = strip_markdown_fences(generation)
-    code = truncate_at_function_end(code)
-    full = prob["prompt"] + code + "\n" + prob["test"] + f"\ncheck({prob['entry_point']})"
+def score_humaneval(prob, generation, chat_mode=False):
+    if chat_mode:
+        code = extract_code_chat(generation)
+        entry = prob["entry_point"]
+        if re.search(rf"^def\s+{re.escape(entry)}\b", code, re.M):
+            full = code + "\n" + prob["test"] + f"\ncheck({entry})"
+        else:
+            full = prob["prompt"] + code + "\n" + prob["test"] + f"\ncheck({entry})"
+    else:
+        code = strip_markdown_fences(generation)
+        code = truncate_at_function_end(code)
+        full = prob["prompt"] + code + "\n" + prob["test"] + f"\ncheck({prob['entry_point']})"
     return _exec_with_timeout(full, prob["task_id"])
 
 
-def score_mbpp(prob: dict, generation: str) -> tuple[bool, str]:
-    code = strip_markdown_fences(generation)
-    code = truncate_at_function_end(code)
+def score_mbpp(prob, generation, chat_mode=False):
+    if chat_mode:
+        code = extract_code_chat(generation)
+    else:
+        code = strip_markdown_fences(generation)
+        code = truncate_at_function_end(code)
     tests = "\n".join(prob.get("test_list", []))
     full = code + "\n" + tests
     return _exec_with_timeout(full, str(prob.get("task_id", "?")))
@@ -214,6 +236,9 @@ def main() -> int:
     parser.add_argument("--exec-timeout", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--max-new-tokens", type=int, default=512)
+    parser.add_argument("--quant", choices=["bf16", "nf4"], default="bf16")
+    parser.add_argument("--chat-template", action="store_true",
+                        help="Wrap each prompt as a user message via tokenizer.apply_chat_template before generation.")
     args = parser.parse_args()
 
     global EXEC_TIMEOUT_S
@@ -223,12 +248,19 @@ def main() -> int:
     print(f"[06-eval-b] SQLite cache: {cache_path} | batch_size={args.batch_size}")
     conn = open_cache(cache_path)
 
-    tokenizer = AutoTokenizer.from_pretrained(args.base_model)
+    tokenizer = AutoTokenizer.from_pretrained(args.base_model, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    base = AutoModelForCausalLM.from_pretrained(
-        args.base_model, torch_dtype=torch.bfloat16, device_map={"": "cuda"}
-    )
+    if args.quant == "nf4":
+        from transformers import BitsAndBytesConfig
+        bnb = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4",
+                                 bnb_4bit_compute_dtype=torch.bfloat16,
+                                 bnb_4bit_use_double_quant=True)
+        base = AutoModelForCausalLM.from_pretrained(
+            args.base_model, quantization_config=bnb, device_map={"": "cuda"}, trust_remote_code=True)
+    else:
+        base = AutoModelForCausalLM.from_pretrained(
+            args.base_model, torch_dtype=torch.bfloat16, device_map="auto", trust_remote_code=True)
     if args.adapter:
         print(f"[06-eval-b] Loading LoRA adapter: {args.adapter}")
         model = PeftModel.from_pretrained(base, args.adapter)
@@ -239,6 +271,14 @@ def main() -> int:
 
     results = {"adapter": args.adapter, "cache_db": cache_path, "batch_size": args.batch_size}
 
+    # If chat template is requested, wrap raw prompts as user messages before tokenization.
+    def _maybe_chat(prompt: str) -> str:
+        if args.chat_template:
+            return tokenizer.apply_chat_template(
+                [{"role": "user", "content": prompt}],
+                tokenize=False, add_generation_prompt=True)
+        return prompt
+
     if not args.skip_humaneval:
         ds = load_dataset("openai/openai_humaneval", split="test")
         if args.he_limit: ds = ds.select(range(min(args.he_limit, len(ds))))
@@ -246,8 +286,8 @@ def main() -> int:
         print(f"[06-eval-b] HumanEval+: {len(problems)} problems")
         results["humaneval"] = run_task_batched(
             "humaneval", model, tokenizer, conn, problems,
-            prompt_fn=lambda p: p["prompt"],
-            score_fn=score_humaneval,
+            prompt_fn=lambda p: _maybe_chat(p["prompt"]),
+            score_fn=lambda p, g: score_humaneval(p, g, chat_mode=args.chat_template),
             batch_size=args.batch_size,
             max_new_tokens=args.max_new_tokens,
         )
@@ -260,8 +300,8 @@ def main() -> int:
         print(f"[06-eval-b] MBPP: {len(problems)} problems")
         results["mbpp"] = run_task_batched(
             "mbpp", model, tokenizer, conn, problems,
-            prompt_fn=_mbpp_prompt,
-            score_fn=score_mbpp,
+            prompt_fn=lambda p: _maybe_chat(_mbpp_prompt(p)),
+            score_fn=lambda p, g: score_mbpp(p, g, chat_mode=args.chat_template),
             batch_size=args.batch_size,
             max_new_tokens=args.max_new_tokens,
         )

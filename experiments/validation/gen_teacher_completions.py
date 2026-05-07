@@ -1,5 +1,3 @@
-Welcome to vast.ai. If authentication fails, try again after a few seconds, and double check your ssh key.
-Have fun!
 """Generate teacher completions for SFT-on-teacher distillation.
 
 Loads the teacher (e.g., DS-Coder-6.7B-Instruct or Qwen2.5-Coder-7B),
@@ -89,6 +87,10 @@ def main():
     p.add_argument("--top-p", type=float, default=0.95)
     p.add_argument("--batch-size", type=int, default=4)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--quant", choices=["bf16", "nf4"], default="bf16")
+    p.add_argument("--chat-template", action="store_true",
+                   help="Wrap each prompt as a user message via tokenizer.apply_chat_template before generation. "
+                        "Required for instruct teachers (~+44pp MBPP for QC-7B).")
     p.add_argument("--mask-teacher-tokens", default="",
                    help="Comma-separated TEACHER-vocab token strings to ban during generation "
                         "(via bad_words_ids). Recommended for thinking-mode teachers: "
@@ -114,8 +116,15 @@ def main():
     if tok.pad_token is None: tok.pad_token = tok.eos_token
     tok.padding_side = "left"
 
-    print("[gen] loading teacher (bf16)...", flush=True)
-    model = AutoModelForCausalLM.from_pretrained(args.teacher, torch_dtype=torch.bfloat16, device_map={"": "cuda"})
+    print(f"[gen] loading teacher ({args.quant})...", flush=True)
+    if args.quant == "nf4":
+        from transformers import BitsAndBytesConfig
+        bnb = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4",
+                                 bnb_4bit_compute_dtype=torch.bfloat16,
+                                 bnb_4bit_use_double_quant=True)
+        model = AutoModelForCausalLM.from_pretrained(args.teacher, quantization_config=bnb, device_map={"": "cuda"}, trust_remote_code=True)
+    else:
+        model = AutoModelForCausalLM.from_pretrained(args.teacher, torch_dtype=torch.bfloat16, device_map={"": "cuda"}, trust_remote_code=True)
     model.eval()
     vocab_size = model.config.vocab_size
 
@@ -137,9 +146,15 @@ def main():
     t0 = time.time(); n_done = 0
     for i in range(0, len(records), args.batch_size):
         batch = records[i:i+args.batch_size]
-        prompts = [r["prompt"] for r in batch]
+        raw_prompts = [r["prompt"] for r in batch]
+        if args.chat_template:
+            prompts = [tok.apply_chat_template([{"role": "user", "content": rp}],
+                                               tokenize=False, add_generation_prompt=True)
+                       for rp in raw_prompts]
+        else:
+            prompts = raw_prompts
         enc = tok(prompts, return_tensors="pt", padding=True, truncation=True,
-                  max_length=args.max_prompt_len, add_special_tokens=False).to("cuda")
+                  max_length=args.max_prompt_len, add_special_tokens=not args.chat_template).to("cuda")
         prompt_lens = enc["attention_mask"].sum(dim=1).tolist()
         with torch.no_grad():
             gen_out = model.generate(
