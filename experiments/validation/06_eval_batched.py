@@ -66,9 +66,18 @@ def strip_thinking(t):
     return THINK_RE.sub("", t).strip()
 
 def extract_code_chat(t):
+    """Extract the LAST python code block from a chat-mode generation.
+
+    Chat models often emit explanatory snippets first and the actual
+    answer in the final fence (audit csl-...-bd96). Falling back to
+    `findall()[-1]` instead of `search()` recovers those cases.
+    Empty fence list → fall back to the whole text (post think-strip).
+    """
     t = strip_thinking(t)
-    m = FENCE_RE_REGEX.search(t)
-    return m.group(1).strip() if m else t.strip()
+    blocks = FENCE_RE_REGEX.findall(t)
+    if blocks:
+        return blocks[-1].strip()
+    return t.strip()
 
 _HE_STOPS = ("\nclass ", "\ndef ", "\n#", "\nif __name__", "\nprint(", "\nassert ", "\n```")
 
@@ -92,6 +101,13 @@ def truncate_at_function_end(s: str) -> str:
 def score_humaneval(prob, generation, chat_mode=False):
     if chat_mode:
         code = extract_code_chat(generation)
+        # Chat path was bypassing truncate (audit csl-...-bd96): trailing
+        # prose after the function definition crashes exec(). Apply the same
+        # function-end truncation as the raw path, but only when the chat
+        # extraction begins with a definition (otherwise truncation would
+        # eat the leading prompt-continuation case below).
+        if code.lstrip().startswith(("def ", "class ")):
+            code = truncate_at_function_end(code)
         entry = prob["entry_point"]
         if re.search(rf"^def\s+{re.escape(entry)}\b", code, re.M):
             full = code + "\n" + prob["test"] + f"\ncheck({entry})"
@@ -107,6 +123,10 @@ def score_humaneval(prob, generation, chat_mode=False):
 def score_mbpp(prob, generation, chat_mode=False):
     if chat_mode:
         code = extract_code_chat(generation)
+        # Same fix as score_humaneval (audit csl-...-bd96): truncate trailing
+        # prose when the extraction starts with a definition.
+        if code.lstrip().startswith(("def ", "class ")):
+            code = truncate_at_function_end(code)
     else:
         code = strip_markdown_fences(generation)
         code = truncate_at_function_end(code)
