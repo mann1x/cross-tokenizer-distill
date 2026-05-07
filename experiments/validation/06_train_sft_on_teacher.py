@@ -126,6 +126,13 @@ def main():
                         "(```python ... ```). For chat-mode teacher completions "
                         "where 55-60%% of the text is prose, this concentrates "
                         "the gradient signal on the actual implementation.")
+    p.add_argument("--code-only-mask-from-epoch", type=int, default=1,
+                   help="1-indexed epoch from which --code-only-mask becomes active. "
+                        "Default 1 = active from epoch 1 (current behavior, requires "
+                        "--code-only-mask). Set to 2 for the council 'Style → Logic' recipe: "
+                        "epoch 1 full-loss SFT (absorb teacher chat-style/format), "
+                        "epoch 2 masked SFT (refine logic without further style-drift). "
+                        "M45 recipe.")
     args = p.parse_args()
 
     torch.manual_seed(args.seed)
@@ -146,11 +153,17 @@ def main():
     student = get_peft_model(student, lora)
     student.print_trainable_parameters()
 
+    # Dataset always builds per-token code_mask if --code-only-mask is set (even if the mask
+    # only activates from a later epoch). Cheap to build, lets the loop gate by epoch.
     ds = TeacherCompletionDataset(args.corpus, tok, max_prompt_len=args.max_prompt_len,
                                    max_total_len=args.max_total_len,
                                    code_only_mask=args.code_only_mask)
     if args.code_only_mask:
-        print("[sft] --code-only-mask: SFT loss restricted to python code-fence interiors", flush=True)
+        if args.code_only_mask_from_epoch <= 1:
+            print("[sft] --code-only-mask: SFT loss restricted to python code-fence interiors (all epochs)", flush=True)
+        else:
+            print(f"[sft] --code-only-mask: ACTIVATES from epoch {args.code_only_mask_from_epoch} "
+                  f"(epochs 1..{args.code_only_mask_from_epoch-1} run full-loss SFT)", flush=True)
     dl = DataLoader(ds, batch_size=args.batch_size, shuffle=True,
                     collate_fn=lambda b: collate(b, tok.pad_token_id),
                     num_workers=0, pin_memory=False, drop_last=True)
@@ -168,13 +181,24 @@ def main():
     student.train()
     step = 0; opt_step = 0; t_start = time.time()
     accum_loss = 0.0
+    # Track mask-density (n_valid / n_unmasked-cont) per logging step. Council audit
+    # 2026-05-07 flagged this as the missing diagnostic for distinguishing "mask too
+    # aggressive" (<20% coverage → flat results) from genuine plateau.
+    accum_n_valid = 0
+    accum_n_unmasked = 0
     for epoch in range(args.epochs):
+        # 1-indexed epoch; mask activates from --code-only-mask-from-epoch onward.
+        mask_active_this_epoch = (args.code_only_mask
+                                  and (epoch + 1) >= args.code_only_mask_from_epoch)
+        if epoch == 0 or mask_active_this_epoch != bool(args.code_only_mask):
+            print(f"[sft] epoch {epoch+1}/{args.epochs} mask_active={mask_active_this_epoch}", flush=True)
         for batch in dl:
             input_ids = batch["input_ids"].cuda()
             attention_mask = batch["attention_mask"].cuda()
             prompt_len = batch["prompt_len"]
             mask = build_loss_mask(input_ids, attention_mask, prompt_len, tok.pad_token_id)
-            if args.code_only_mask:
+            n_unmasked = mask.sum().item()  # continuation positions (pre-code-only-mask)
+            if mask_active_this_epoch:
                 # Only count loss at positions whose TARGET token is inside a
                 # code fence. mask is on positions i (predicting i+1), so AND
                 # with code_mask shifted by 1.
@@ -193,6 +217,8 @@ def main():
 
             (loss / args.grad_accum).backward()
             accum_loss += loss.item()
+            accum_n_valid += int(slice_mask.sum().item())
+            accum_n_unmasked += int(n_unmasked)
             step += 1
 
             if step % args.grad_accum == 0:
@@ -203,8 +229,15 @@ def main():
                     avg = accum_loss / args.grad_accum
                     elapsed = time.time() - t_start
                     n_valid = slice_mask.sum().item()
-                    print(f"[sft] step={opt_step}/{total_steps} loss={avg:.4f} lr={sched.get_last_lr()[0]:.2e} mask_pos={n_valid} {elapsed:.0f}s", flush=True)
+                    # mask_density: fraction of continuation positions that survive the
+                    # code-only mask. <0.20 means we're training on <20% of teacher tokens
+                    # (council audit 2026-05-07: signal for "mask too aggressive → flat results").
+                    density = (accum_n_valid / accum_n_unmasked) if accum_n_unmasked else 0.0
+                    print(f"[sft] step={opt_step}/{total_steps} loss={avg:.4f} lr={sched.get_last_lr()[0]:.2e} "
+                          f"mask_pos={n_valid} mask_density={density:.2f} {elapsed:.0f}s", flush=True)
                 accum_loss = 0.0
+                accum_n_valid = 0
+                accum_n_unmasked = 0
 
         ck = out / f"epoch-{epoch+1}"
         student.save_pretrained(ck)
