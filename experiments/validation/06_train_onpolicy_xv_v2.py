@@ -126,6 +126,14 @@ def main():
                    help="Mobius trick: clip teacher logits to [-c,+c] before softmax. "
                         "0.0 = disabled (M6b default). 15.0 = recommended starting point.")
     p.add_argument("--top-k-student", type=int, default=32)
+    p.add_argument("--suffix-reencode-teacher", action="store_true",
+                   help="When student/teacher tokenizations diverge at a position, re-run "
+                        "the teacher on `teacher_prefix + suffix_tokens` and use the FINAL "
+                        "logit as the distill target (instead of dropping the position). "
+                        "Recovers cross-vocab boundary mismatches at ~1.3-1.5x teacher "
+                        "forward cost. No-op for same-vocab (IdentityMapper) runs.")
+    p.add_argument("--max-suffix-batch", type=int, default=64,
+                   help="Max suffix-reencode rows per batch (caps the auxiliary teacher forward).")
     args = p.parse_args()
 
     torch.manual_seed(args.seed)
@@ -264,6 +272,51 @@ def main():
                 t_out = teacher(input_ids=t_input, attention_mask=t_attn)
             t_logits = t_out.logits  # [B_kept, L_t, V_t]
 
+            # 4b. Optional: re-encode suffix-aligned positions through the teacher.
+            #     For each alignment entry where student-byte-offset doesn't match
+            #     a teacher-byte boundary, we have planned a continuation
+            #     `teacher_seq[:k_anchor+1] + suffix_tokens`. Run the teacher on
+            #     those pseudo-sequences and grab the final logit. Indexed by
+            #     (i, j_student) -> auxiliary row.
+            suffix_logit_lookup: dict[tuple[int, int], int] = {}
+            suffix_logits = None
+            if args.suffix_reencode_teacher and not same_vocab:
+                suffix_inputs: list[list[int]] = []
+                for i, b_orig in enumerate(orig_idx):
+                    p_len = prompt_lens_s[i]
+                    len_s = len(student_rows[i])
+                    for entry in alignments[i].entries:
+                        j = entry.student_pos
+                        if not entry.valid: continue
+                        if entry.suffix_token_ids is None: continue
+                        if j < p_len - 1 or j > len_s - 2: continue
+                        anchor = entry.kv_anchor_pos
+                        prefix_ids = teacher_seqs[i][:anchor + 1] if anchor >= 0 else []
+                        pseudo = list(prefix_ids) + list(entry.suffix_token_ids)
+                        if not pseudo: continue
+                        suffix_logit_lookup[(i, j)] = len(suffix_inputs)
+                        suffix_inputs.append(pseudo)
+                if suffix_inputs:
+                    # Cap the auxiliary batch — large corpora can yield 100s of suffix
+                    # rows per micro-batch, blowing VRAM if we forward them all at once.
+                    aux_logits_chunks = []
+                    for chunk_start in range(0, len(suffix_inputs), args.max_suffix_batch):
+                        chunk = suffix_inputs[chunk_start:chunk_start + args.max_suffix_batch]
+                        max_l = max(len(s) for s in chunk)
+                        s_pad = torch.full((len(chunk), max_l), t_pad, dtype=torch.long, device="cuda")
+                        s_attn = torch.zeros_like(s_pad)
+                        final_pos = torch.zeros(len(chunk), dtype=torch.long, device="cuda")
+                        for k, ids in enumerate(chunk):
+                            s_pad[k, :len(ids)] = torch.tensor(ids, device="cuda")
+                            s_attn[k, :len(ids)] = 1
+                            final_pos[k] = len(ids) - 1
+                        with torch.no_grad():
+                            s_out = teacher(input_ids=s_pad, attention_mask=s_attn)
+                        # Gather the final-position logit per row.
+                        idx = final_pos.view(-1, 1, 1).expand(-1, 1, s_out.logits.shape[-1])
+                        aux_logits_chunks.append(s_out.logits.gather(1, idx).squeeze(1))
+                    suffix_logits = torch.cat(aux_logits_chunks, dim=0)  # [N_suffix, V_t]
+
             # 5. Per-example: build per-position KL contributions, sum into a global running accumulator.
             #    Critical mapping: full_s[b_orig] is left-padded. The student's position in full_s
             #    that holds "student token j of student_rows[i]" = pad_count_b + j.
@@ -277,22 +330,43 @@ def main():
                 # i.e. logit at student_rows position j predicts token j+1.
                 # In full_s coords, that's position pad_count_b + j.
                 valid_s_full = []
-                valid_t = []
+                valid_t = []                  # teacher_pos for natural-aligned entries
+                valid_aux_idx = []            # auxiliary-row index for suffix entries (-1 if natural)
                 for entry in alignments[i].entries:
                     j = entry.student_pos
-                    if not entry.valid or entry.suffix_token_ids is not None: continue
+                    if not entry.valid: continue
                     if j < p_len - 1 or j > len_s - 2: continue
-                    valid_s_full.append(pad_count_b + j)
-                    valid_t.append(entry.teacher_pos)
-                accum_dropped += sum(1 for e in alignments[i].entries
-                                     if (not e.valid or e.suffix_token_ids is not None)
-                                     and (p_len - 1 <= e.student_pos <= len_s - 2))
+                    if entry.suffix_token_ids is None:
+                        valid_s_full.append(pad_count_b + j)
+                        valid_t.append(entry.teacher_pos)
+                        valid_aux_idx.append(-1)
+                    elif suffix_logits is not None and (i, j) in suffix_logit_lookup:
+                        valid_s_full.append(pad_count_b + j)
+                        valid_t.append(0)  # placeholder, won't be read
+                        valid_aux_idx.append(suffix_logit_lookup[(i, j)])
+                    # else: suffix entry without re-encode → drop (counted below)
+                accum_dropped += sum(
+                    1 for e in alignments[i].entries
+                    if (
+                        (not e.valid)
+                        or (e.suffix_token_ids is not None
+                            and (suffix_logits is None or (i, e.student_pos) not in suffix_logit_lookup))
+                    )
+                    and (p_len - 1 <= e.student_pos <= len_s - 2)
+                )
                 if not valid_s_full: continue
                 v_s_t = torch.tensor(valid_s_full, device="cuda")
                 v_t_t = torch.tensor(valid_t, device="cuda")
+                v_aux_t = torch.tensor(valid_aux_idx, device="cuda")
 
                 s_lp = s_log_probs[b_orig, v_s_t, :]                # [N, V_s]
+                # Mix natural-aligned teacher logits with suffix-reencoded auxiliary logits.
                 t_lg = t_logits[i, v_t_t, :]                        # [N, V_t]
+                if suffix_logits is not None and (v_aux_t >= 0).any():
+                    aux_mask = v_aux_t >= 0
+                    aux_idx_safe = v_aux_t.clamp(min=0)
+                    aux_rows = suffix_logits.index_select(0, aux_idx_safe)  # [N, V_t]
+                    t_lg = torch.where(aux_mask.unsqueeze(-1), aux_rows, t_lg)
                 if args.teacher_logit_clip > 0:
                     t_lg = t_lg.clamp(-args.teacher_logit_clip, args.teacher_logit_clip)
                 t_lp = F.log_softmax(t_lg / args.temperature, dim=-1)
