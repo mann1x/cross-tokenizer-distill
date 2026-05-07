@@ -18,3 +18,8 @@ experiments/validation/cache_*/
 .DS_Store
 .caliber/
 experiments/validation/logs/
+
+# Local-only runtime
+experiments/validation/runs/
+.claude-hooks/
+.claude/settings.local.json

@@ -181,3 +181,171 @@ The CTD step is upside-only: if it doesn't lift the base, we just skip it. If it
 ## Decision
 
 **Sign off on**: phases 0-4 as scoped, ~20 hr compute budget, two-student A/B as the v1 → v2 differentiator. **Defer**: open questions 1-4 to in-flight decisions per phase.
+
+---
+
+## Phase 1+2 results (locked, 2026-05-07)
+
+| recipe | student | data | HE | MBPP | dHE | dMBPP |
+|---|---|---|---:|---:|---:|---:|
+| baseline DSC1.3B | — | — | 56.1 | 41.0 | — | — |
+| baseline QC1.5B  | — | — | 63.4 | 45.0 | — | — |
+| **M37** | DSC1.3B | funcsig         (rank 16) | 61.0 | 42.3 | **+4.9** | **+1.3** |
+| M38     | DSC1.3B | mbpp_train      (rank 16) | 58.5 | 37.8 | +2.4 | -3.2 |
+| M39     | QC1.5B  | KL on-policy mbpp_train   | 61.6 | 41.0 | -1.8 | -4.0 |
+| M40     | QC1.5B  | mbpp_train      (rank 16) | 62.2 | 45.0 | -1.2 |  0.0 |
+| M41     | QC1.5B  | funcsig         (rank 16) | 61.0 | 46.0 | -2.4 | +1.0 |
+| M41b    | QC1.5B  | funcsig         (rank 64) | 60.4 | 47.9 | -3.0 | +2.9 |
+
+**Findings**:
+- Cross-vocab DSC1.3B + funcsig (M37) is the only net-positive recipe. Replicates v1 winner.
+- Every QC1.5B same-vocab recipe loses HE (-1 to -3 pp). Capacity (M41b r=64) makes HE worse, MBPP better → fitting a *shifted* signal harder, not capacity-limited.
+- M39 (on-policy KL same-vocab) is the worst across the board (HE -1.8 / MBPP -4.0).
+- M38 reproduces v1's MBPP regression on mbpp_train.
+
+## Audit fixes (csl-2026-05-07-1916-bd96)
+
+1. **Eval extractor**: `extract_code_chat()` now uses `FENCE_RE_REGEX.findall()[-1]` (last fence) + `truncate_at_function_end()` on raw def/class. Commit `b499c36`.
+2. **#105 same-vocab IdentityMapper**: `tokenizers_match(a, b, n_probe=256)` (vocab_size + special tokens + first 256 token-ids probe) → `IdentityMapper` bypass when match. Smoke aligned=128 dropped=0.
+3. **#108 suffix re-encoding**: opt-in `--suffix-reencode-teacher` reconstructs teacher logits at student-suffix boundary by re-encoding (prefix_anchor + student_suffix) and gathering final-position logit per chunked aux forward.
+4. **#111 Path C — code-only chat completions + code-fence loss mask**:
+   - Regenerated both corpora with code-only system prompt → audit prose-share=0.0%, no-fence=0/374 + 0/474 (vs prior 55-60% prose).
+   - SFT trains with `--code-only-mask`: tokenizer offset_mapping → per-token mask of "is this token inside a python code fence" → AND with build_loss_mask shifted by 1.
+   - Phase 2.5 re-runs all 5 SFT recipes (M40c/M41c/M41bc/M38c/M37c).
+
+## Phase 2.5 results (in flight, 2026-05-07)
+
+| recipe | student | data | HE | MBPP | dHE vs base | dHE vs Phase 1+2 counterpart |
+|---|---|---|---:|---:|---:|---:|
+| **M40c** | QC1.5B | mbpp_train (rank 16, code-only) | 59.8 | 42.9 | -3.6 | **-2.4** |
+| M41c     | (running) | | | | | |
+| M41bc    | (queued) | | | | | |
+| M38c     | (queued) | | | | | |
+| M37c     | (queued) | | | | | |
+
+**Early signal**: M40c regressed Phase 1+2 M40 by -2.4 HE / -2.1 MBPP. Code-only mask **hurt** the QC-1.5B + mbpp_train recipe rather than helping. Hypothesis: the loss mask discards 50%+ of teacher tokens (the prose explanations) which were carrying a load-balancing role; gradient now over-concentrates on code tokens that are already easy. Headline test now M37c (the Phase 1+2 winner) and M41bc (rank 64 with mask).
+
+## Council follow-up verdict (csl-2026-05-07-2207-0a17)
+
+Synthesizer: QC-1.5B "HE-drain" is **distributional shift** — student is learning chat-bot habits, not coding. Path C is the right architectural fix in principle. If Path C falls short:
+
+- **Mixed Loss**: Distill + Base SFT (anchor against student's own raw-mode prior). α sweep (0.1/0.3/0.5).
+- **KL temperature down**: lower `temperature` in `06_train_onpolicy_xv_v2.py:108` or β-decay teacher influence.
+- **Validity gate**: skip KL update at positions where the student's chosen token is non-code (`<think>`, control tokens, repeats) — those positions have noise teacher logits.
+- **Defer #109** (suffix re-encode A/B): only helps cross-vocab on-policy KL, which is not the winning track.
+
+**Bottom line**: if M37c holds the M37 lead and inverts the QC-1.5B HE-drain on M41c/M41bc, commit to **Cross-Vocab SFT**. If Path C uniformly regresses (M40c shape), pivot to **Phase 3 mixed-loss** (#112) before any more Phase 2.5 variations.
+
+## M41c update — Path C works on funcsig (2026-05-07 20:13 UTC)
+
+| recipe | data | HE | MBPP | vs Phase 1+2 | vs base |
+|---|---|---:|---:|---:|---:|
+| M40c | mbpp_train (code-only) | 59.8 | 42.9 | -2.4 / -2.1 | -3.6 / -2.1 |
+| **M41c** | **funcsig (code-only)** | **64.0** | **48.4** | **+3.0 / +2.4** | **+0.6 / +3.4** |
+
+**M41c is the first QC-1.5B same-vocab recipe with positive HE delta vs base.**
+
+**Corpus dependence**: code-only mask helps funcsig but hurts mbpp_train. Working theory:
+the mask is a no-op when the teacher response is already code-dominant (funcsig: "given def
+foo(x): impl") because little prose gets dropped; the mask is a gradient-density killer when
+the teacher response is reasoning-heavy (mbpp_train: NL prompt → English explanation + code)
+because 50%+ of teacher tokens are masked out.
+
+**Implication**: Phase 3 mixed-loss pivot is **postponed** (M41c proves Path C *can* work).
+Phase 3 should instead bias toward funcsig-style/code-dense corpora and skip raw NL prompts
+when running with `--code-only-mask`.
+
+Headline race now: M37c (cross-vocab DSC + funcsig + code-only). Expected to be the biggest
+winner if the funcsig + code-only synergy generalizes across vocabs.
+
+## M41bc update — capacity confirms r=16 + mask is the regularizer (2026-05-07 20:31 UTC)
+
+| recipe | rank | mask | HE | MBPP | vs base |
+|---|---:|---|---:|---:|---:|
+| M41   | 16 | none      | 61.0 | 46.0 | -2.4 / +1.0 |
+| M41b  | 64 | none      | 60.4 | 47.9 | -3.0 / +2.9 |
+| M41c  | 16 | code-only | 64.0 | 48.4 | **+0.6 / +3.4** |
+| M41bc | 64 | code-only | 60.4 | 50.3 | -3.0 / **+5.3** |
+
+Two things land cleanly:
+
+1. **r=64 brings the HE-drain back even WITH the mask**: M41bc HE = 60.4 = M41b HE (without
+   mask), losing the +3.6pp M41c gained. Interpretation: at rank=64 the LoRA has enough degrees
+   of freedom to overfit chat-prose patterns the mask was supposed to suppress. Code-only mask
+   is doing real regularization at r=16, but it's defeated at r=64.
+2. **MBPP scales monotonically with capacity**: 46.0 → 47.9 → 48.4 → 50.3 (M41bc is QC-1.5B's
+   best MBPP ever, +5.3 vs base). Capacity is a MBPP lever; mask cleanliness is a HE lever.
+
+**M41c wins on the dual metric**: only QC-1.5B recipe with both dHE>0 and dMBPP>0 vs base.
+M41bc wins on MBPP-max but pays HE.
+
+## M38c update — cross-vocab tolerates the mask on prose data (2026-05-07 20:47 UTC)
+
+| recipe | student | data | mask | HE | MBPP | vs base |
+|---|---|---|---|---:|---:|---:|
+| M40  | QC-1.5B | mbpp_train | OFF | 62.2 | 45.0 | -1.2 / 0.0 |
+| M40c | QC-1.5B | mbpp_train | ON  | 59.8 | 42.9 | **-3.6 / -2.1** |
+| M38  | DSC-1.3B | mbpp_train | OFF | 58.5 | 37.8 | +2.4 / -3.2 |
+| **M38c** | **DSC-1.3B** | **mbpp_train** | **ON** | **62.2** | **38.4** | **+6.1 / -2.6** |
+
+**Cross-vocab tolerates the mask on prose data; same-vocab does not.** M38c's +6.1 HE is the
+biggest HE delta in v2 so far (bigger than M37's +4.9). The MBPP regression persists but didn't
+deepen — Path C is HE-positive on the prose-heavy corpus when the vocab is cross.
+
+Working theories for the asymmetry:
+
+1. **Information bottleneck**: VocabMapper first-token projection forces additional regularization
+   on the gradient, preventing over-concentration that hurts QC-1.5B same-vocab.
+2. **Prior strength**: DSC-1.3B-Instruct is a code-base model (vs QC-1.5B-Instruct's
+   conversational tilt). Code-only mask reinforces what DSC already knows; for QC-1.5B it
+   collides with a chat-prior the mask can't suppress.
+
+**Implication for Phase 3**: cross-vocab + Path C is robust across corpora; same-vocab + Path C
+needs to filter to code-dense data (funcsig-style). M44 hard-prompt mining stays interesting
+for both tracks but is now a +bonus rather than a rescue.
+
+## Phase 2.5 FINAL — M37c headline (2026-05-07 21:15 UTC, ALL DONE)
+
+| recipe | student | data | mask | rank | HE | MBPP | dHE | dMBPP | dual+ |
+|---|---|---|---|---:|---:|---:|---:|---:|:---:|
+| **M37**   | DSC1.3B | funcsig    | OFF | 16 | 61.0 | 42.3 | +4.9 | +1.3 | ✓ |
+| **M37c**  | DSC1.3B | funcsig    | ON  | 16 | 62.2 | 41.3 | **+6.1** | +0.3 | ✓ |
+| M38       | DSC1.3B | mbpp_train | OFF | 16 | 58.5 | 37.8 | +2.4 | -3.2 |   |
+| M38c      | DSC1.3B | mbpp_train | ON  | 16 | 62.2 | 38.4 | +6.1 | -2.6 |   |
+| M40       | QC1.5B  | mbpp_train | OFF | 16 | 62.2 | 45.0 | -1.2 | 0.0  |   |
+| M40c      | QC1.5B  | mbpp_train | ON  | 16 | 59.8 | 42.9 | -3.6 | -2.1 |   |
+| M41       | QC1.5B  | funcsig    | OFF | 16 | 61.0 | 46.0 | -2.4 | +1.0 |   |
+| **M41c**  | QC1.5B  | funcsig    | ON  | 16 | 64.0 | 48.4 | +0.6 | **+3.4** | ✓ |
+| M41b      | QC1.5B  | funcsig    | OFF | 64 | 60.4 | 47.9 | -3.0 | +2.9 |   |
+| **M41bc** | QC1.5B  | funcsig    | ON  | 64 | 60.4 | 50.3 | -3.0 | **+5.3** |   |
+
+**Verdict**:
+1. M37c lands within noise of M37 (+1.2 HE / -1.0 MBPP). Path C did not move cross-vocab funcsig
+   meaningfully — M37 was already near the local ceiling.
+2. M41c is the first same-vocab QC1.5B dual-positive recipe (cleanly beats base on both metrics).
+3. M38c shows cross-vocab + Path C is robust on prose data (+6.1 HE even on mbpp_train).
+4. r=64 + mask collapses back to r=64-no-mask HE behavior — capacity defeats mask regularization.
+
+**Headline picks**:
+- **M37c** (cross-vocab DSC + funcsig + code-only, r=16) — best HE delta (+6.1).
+- **M41c** (same-vocab QC + funcsig + code-only, r=16) — best dual-positive same-vocab.
+- **M41bc** (r=64 variant) — best MBPP gain ever (+5.3) at the cost of HE.
+
+## Phase 3 redirect (post-2.5)
+
+- **Drop mixed-loss to P2** (#112): M41c proves Path C alone can invert the HE-drain.
+- **Promote M44 hard-prompt mining to P0**: filter teacher corpus to problems where the student
+  base FAILS, train M37c-style cross-vocab + funcsig + mask on those. Hypothesis: 80% of
+  teacher signal is wasted on already-passing problems; concentrating capacity on actual gaps
+  could push HE from +6 to +9-10.
+- **M43 2-stage (SFT init → on-policy KL)** stays as P1, gated on validity-gate (#113) landing.
+- **#109 suffix re-encoding**: keep deferred; only helps cross-vocab on-policy KL (not winning track).
+
+## Mythic-RDT downstream projection (M37c applied to DSC-V2-Lite)
+
+- DSC-V2-Lite base = HE 75.6 / MBPP 60.6
+- + M37c gain transfer = HE ~81.7 / MBPP ~60.9 (modest MBPP, big HE)
+- Mythic-RDT T=8 wraps from 81.7 floor → target ≥ 80.6 (Mythic-Coder spec) is comfortably met
+  without recurrence even needing to add value, then any T=8 win is upside.
+- Sanity check first: re-run M37c recipe on DSC-V2-Lite at small scale (1 epoch, eval) before
+  committing to Mythic-RDT recurrence wrap.

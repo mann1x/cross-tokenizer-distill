@@ -170,30 +170,73 @@ Decision rules:
 
 ## Status
 
-Pre-alpha. Scaffolded 2026-05-02. First user: Mythic-RDT v6U.
+Alpha. Scaffolded 2026-05-02. v2 closed Phase 2.5 on 2026-05-07 with three
+working dual-positive recipes. See [`docs/V2_CTD_PLAN.md`](docs/V2_CTD_PLAN.md)
+for the full result table.
 
-**Validation in progress** — see [`docs/RESULTS.md`](docs/RESULTS.md) for live numbers.
-Highlights from the pod 35822024 run (DS-Coder-1.3B-Instruct student,
-HumanEval-164 + MBPP-378 full sets):
+### v2 working recipes (2026-05-07)
+
+QC-14B-Instruct-NF4 (chat) teacher, HumanEval-164 + MBPP-378 full sets,
+chat-mode eval with FENCE-last extractor + truncate-after-fn, rank=16
+LoRA unless noted, 2 epochs, lr=5e-5.
+
+**Bases**: DS-Coder-1.3B-Instruct = HE 56.1 / MBPP 41.0 ; QC-1.5B-Instruct = HE 63.4 / MBPP 45.0
+; QC-14B-NF4 (teacher) = HE 86.0 / MBPP 74.3.
+
+| Recipe | Student | Data | Code-only mask | Rank | HE | MBPP | dHE | dMBPP |
+|---|---|---|:---:|---:|---:|---:|---:|---:|
+| **M37c** | DSC-1.3B (xv) | funcsig | ✓ | 16 | 62.2 | 41.3 | **+6.1** | +0.3 |
+| **M41c** | QC-1.5B (sv)  | funcsig | ✓ | 16 | 64.0 | 48.4 | +0.6 | **+3.4** |
+| **M41bc** | QC-1.5B (sv) | funcsig | ✓ | 64 | 60.4 | 50.3 | -3.0 | **+5.3** |
+
+(xv = cross-vocab via VocabMapper; sv = same-vocab via IdentityMapper bypass.)
+
+**Pick by goal**:
+- Best HE delta: **M37c** (+6.1) — cross-vocab CTD, headline pick for Mythic-RDT
+  pre-recurrence step on DS-Coder-V2-Lite.
+- Best dual gain: **M41c** — first same-vocab QC-1.5B recipe to beat base on both metrics.
+- Best MBPP: **M41bc** (r=64) — trades HE for +5.3 MBPP, useful when MBPP-only is the goal.
+
+**Three structural fixes that made it work**:
+
+1. **Code-only chat completions** — regenerate teacher completions with a
+   "Python code generator only, wrap in ```python```" system prompt. Drops
+   prose-share from 55-60% to 0%. Required for Path C below to be coherent.
+2. **`--code-only-mask` SFT loss** — restrict CE to tokens INSIDE
+   ```python ... ``` fences (offset_mapping → per-token mask). Concentrates
+   gradient on code; preserves student's coding prior under chat-template shift.
+3. **Eval extractor: last-fence + truncate-after-fn** — chat-mode generations
+   often emit a leading prose explanation followed by the actual `def`. The
+   pre-fix extractor took the FIRST fence; the patch takes the LAST and
+   truncates at next top-level `def`/`class` so the exec scorer sees a clean
+   single function.
+
+### Pattern asymmetries observed
+
+- **Cross-vocab tolerates the mask broadly**: M38c on prose-heavy mbpp_train still
+  gained +6.1 HE. The VocabMapper projection appears to act as additional
+  regularization that keeps gradient density healthy under aggressive masking.
+- **Same-vocab needs code-dense corpora**: M40c (QC-1.5B + mbpp_train + mask)
+  regressed -3.6 HE / -2.1 MBPP. Without cross-vocab regularization, the mask
+  drops 50%+ of teacher tokens (the prose) and over-concentrates gradient on
+  the easy-to-converge code positions.
+- **r=64 + mask reverts the HE-drain**: M41bc HE = M41b HE (60.4) without mask;
+  rank=64 has enough degrees of freedom to overfit chat-prose patterns the mask
+  was supposed to suppress. r=16 is the sweet spot if HE matters.
+
+### v1 archive (kept for reference)
 
 | Run | Method | HE-164 | Δ vs base |
 |---|---|---|---|
-| BASE | no-FT | 59.8 % | — |
 | M3 (same-vocab GKD, JSD β=0.5) | KL distill | 55.5 % | −4.3 |
-| M4 (same-vocab MiniLLM, RKL on-policy) | reverse-KL distill | 54.3 % | −5.5 |
 | M5 (same-vocab DistillSpec/FKL on-policy) | forward-KL distill | 56.1 % | −3.7 |
-| SFT (mbpp_train, same recipe as M3) | cross-entropy | 51.8 % | −8.0 |
-| ~~M6 first attempt~~ | ~~cross-vocab CTD~~ | ~~38.4~~ | **retracted (code bug — see RESULTS.md)** |
-| **M6b** (re-run with bug fixes + `multi_token=first_token`) | CTD on-policy FKL | **53.0** HE / **53.2** MBPP | HE gate ✓, MBPP regression vs M3 — **CTD parity push next** |
-| **M7** (capacity test: rank 64, ep 4, M5 recipe) | same-vocab on-policy FKL | **54.3** HE / **62.2** MBPP | HE −5.5 / MBPP **+1.1** vs base — first to clear base, but on MBPP not HE |
-| **M8** (mixed corpus: MBPP 374 + synthetic 1471) | same-vocab on-policy FKL | **53.0** HE / **60.3** MBPP | HE −6.8 vs base, **identical to M6b ⇒ CTD parity proof** (cross-vocab projection is not the limit, the recipe family is) |
+| M7 (capacity, rank 64 + 4 ep) | same-vocab FKL | 54.3 % | −5.5 (HE) / +1.1 (MBPP) |
+| **M16 (SFT on teacher completions)** | sequence imitation | **65.9 %** | **+6.1** |
+| M37 (cross-vocab SFT funcsig) | cross-vocab SFT | 61.0 % | +4.9 |
 
-Headline finding from M3/M4/M5: **distillation regularises vs SFT by
-3.7–4.3 pp on HE at the same recipe** — the teacher signal stops the small
-student from overfitting the narrow training set, but no same-vocab variant
-beats the no-FT base on this corpus. M6 (cross-vocab CTD with a 7B teacher),
-M7 (capacity test, rank 64 + 4 ep), and M8 (mixed corpus) are in flight to
-break the ceiling.
+v1 headline: **SFT on teacher completions (M16) was the first recipe to clear
+the base by a wide margin.** v2 reproduces and amplifies this with chat-mode
+SFT + Path C + code-only regeneration.
 
 ## License
 

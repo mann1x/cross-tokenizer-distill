@@ -95,6 +95,11 @@ def main():
                    help="Comma-separated TEACHER-vocab token strings to ban during generation "
                         "(via bad_words_ids). Recommended for thinking-mode teachers: "
                         "'<think>,</think>'. Resolved through ctd.util.make_teacher_token_blacklist.")
+    p.add_argument("--system-prompt", default=None,
+                   help="Optional system message prepended via chat template "
+                        "(only with --chat-template). Used to constrain output "
+                        "format, e.g. 'code-only' regen for SFT corpora that "
+                        "would otherwise be 55-60%% prose.")
     p.add_argument("--mask-teacher-token-ids", default="",
                    help="Comma-separated raw teacher token IDs to ban (additive to --mask-teacher-tokens).")
     args = p.parse_args()
@@ -150,7 +155,13 @@ def main():
         batch = records[i:i+args.batch_size]
         raw_prompts = [r["prompt"] for r in batch]
         if args.chat_template:
-            prompts = [tok.apply_chat_template([{"role": "user", "content": rp}],
+            def _msgs(rp):
+                msgs = []
+                if args.system_prompt:
+                    msgs.append({"role": "system", "content": args.system_prompt})
+                msgs.append({"role": "user", "content": rp})
+                return msgs
+            prompts = [tok.apply_chat_template(_msgs(rp),
                                                tokenize=False, add_generation_prompt=True)
                        for rp in raw_prompts]
         else:
