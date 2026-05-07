@@ -405,9 +405,9 @@ entirely) and is also unaffected.
 | M22 SFT mix-corpus (synth-polluted) | SFT cross-vocab mixed | 14.0 | 38.6 |
 | M21b/c SFT on Qwen-base | SFT cross-vocab | 0.0/0.6 | ~35 |
 | M28 GRPO+KL Distill (verified exec reward, K=4) | GRPO + on-policy KL cross-vocab | killed @ step 30 | _signal too sparse — K=4 not enough_ |
-| M32 M6b on bigger corpus (mixed_v1 1845) | KL cross-vocab + data | _in flight_ | _in flight_ |
-| M33 M6b multi_token=distribute | KL cross-vocab + projection | _queued_ | _queued_ |
-| M34 M6b LoRA rank=64 | KL cross-vocab + capacity | _queued_ | _queued_ |
+| M32 M6b on bigger corpus (mixed_v1 1845) | KL cross-vocab + data | 37.2 | 31.2 |
+| M33 M6b multi_token=distribute | KL cross-vocab + projection | 39.6 | 21.4 |
+| M34 M6b LoRA rank=64 | KL cross-vocab + capacity | 41.5 | 32.5 |
 
 **Headline reframe (after fix):**
 
@@ -478,6 +478,60 @@ corrupts both naming and structural conventions. See
 problem, not the SFT loss. M23 = MBPP-only (474 real prompts, no
 synth). M24 = M23×3 multi-completion sampling + 500 CodeAlpaca + 500
 CodeContests (2422 total clean prompts).
+
+## M32-M34 + DS-V2-Lite baseline (2026-05-07)
+
+**Re-eval base** with the fixed scorer: **HE-164 = 56.1 % (92/164),
+MBPP-378 = 41.0 % (155/378)** for DS-Coder-1.3B-Instruct. The pre-bug
+"baseline" of 59.8 / 61.1 was inflated — particularly MBPP, which
+dropped 20 pp under the corrected scorer. **The MBPP-cross-vocab
+"gap" was largely a scorer artifact.** Against the new base, M25's
+MBPP 39.9 is essentially at base (-1.1 pp), and M6b's MBPP 53.2 is
++12 pp ABOVE base. Reframes the project: cross-vocab CTD doesn't have
+a "MBPP problem" — the prior baseline was wrong.
+
+**Teacher (Qwen2.5-Coder-7B-Inst) re-eval**: HE-164 = 82.9 %
+(136/164), MBPP-378 = 68.8 % (260/378). Headroom = 26.8 pp HE / 27.8
+pp MBPP — the student-teacher gap is large and consistent across
+both benches.
+
+**M32/M33/M34 verdict — three negative variations.** Tried more
+data, richer cross-vocab projection, and 4× LoRA capacity
+respectively. All three regressed below base on both metrics:
+
+| Run | Knob vs M6b | HE-164 | MBPP-378 | vs base |
+|---|---|---:|---:|---|
+| BASE re-eval | — | 56.1 | 41.0 | — |
+| M6b reference | (M6b recipe) | 53.0 | 53.2 | -3.1 / +12.2 |
+| **M32** mixed_v1 1845 prompts | bigger corpus | 37.2 | 31.2 | -18.9 / -9.8 |
+| **M33** multi_token=distribute | richer projection | 39.6 | 21.4 | -16.5 / -19.6 |
+| **M34** LoRA rank=64 | 4× capacity | 41.5 | 32.5 | -14.6 / -8.5 |
+
+Each axis (data, projection, capacity) made things worse. The cross-
+vocab on-policy KL recipe is **fragile to all three knobs** at
+M6b's recipe point; the soft ceiling around HE 51-55 is **the actual
+ceiling** for this trainer family. M25 SFT (55.5 / 39.9) and M6b
+on-policy KL (53.0 / 53.2) remain the Pareto frontier — the former
+on HE, the latter on MBPP. No further "more data / richer mapper /
+more rank" runs justified.
+
+**DS-V2-Lite baseline at NF4 + BF16** (Mythic-RDT downstream
+target — measured here so future Mythic-RDT runs can use the same
+scorer):
+
+| Quant | HE-164 | MBPP-378 |
+|---|---:|---:|
+| NF4 | 75.6 % (124/164) | 60.6 % (229/378) |
+| BF16 | 75.6 % (124/164) | 60.3 % (228/378) |
+
+NF4 and BF16 land within ±1 problem on MBPP and bit-for-bit on HE.
+NF4 is a free quant on this base — Mythic-RDT defaults to NF4 with
+no quality cost. Note the 5.5 pp gap between our HE (75.6) and the
+DS-Coder-V2-Lite model card (81.1) — that's a scorer-method gap,
+not a model regression. Mythic-RDT wrapper deltas must be measured
+against 75.6 / 60.6 to be apples-to-apples; recorded in
+`Mythic-RDT/BASE_DEEPSEEK_CODER_V2_LITE.md` as the canonical
+internal baseline.
 
 **Teacher logit caches** built and saved (student-agnostic, reusable
 across student variants):
