@@ -7,11 +7,16 @@ hit 3-5x wallclock speedup on under-utilized GPUs.
 """
 from __future__ import annotations
 
-import argparse, json, re, signal, sqlite3, sys, time
+import argparse
+import json
+import re
+import signal
+import sqlite3
+import sys
+import time
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
-from typing import Optional
 
 import torch
 from datasets import load_dataset
@@ -56,9 +61,12 @@ _FENCE_RE = "```"
 
 def strip_markdown_fences(s: str) -> str:
     s = s.rstrip()
-    if s.startswith(_FENCE_RE_PY): s = s[len(_FENCE_RE_PY):].lstrip("\n")
-    elif s.startswith(_FENCE_RE): s = s[len(_FENCE_RE):].lstrip("\n")
-    if _FENCE_RE in s: s = s.split(_FENCE_RE)[0]
+    if s.startswith(_FENCE_RE_PY):
+        s = s[len(_FENCE_RE_PY):].lstrip("\n")
+    elif s.startswith(_FENCE_RE):
+        s = s[len(_FENCE_RE):].lstrip("\n")
+    if _FENCE_RE in s:
+        s = s.split(_FENCE_RE)[0]
     return s
 
 
@@ -224,7 +232,8 @@ def run_task_batched(name: str, model, tokenizer, conn, problems, prompt_fn, sco
                     passed, info = False, f"ScoreError: {type(e).__name__}: {str(e)[:120]}"
                 t_exec = time.monotonic() - t1
                 cache_save(conn, name, tid, gen, passed, info)
-                if passed: n_pass += 1
+                if passed:
+                    n_pass += 1
                 n_seen += 1
                 mark = "PASS" if passed else "FAIL"
                 print(f"  {name.upper()} {n_seen}/{len(problems)} {tid:<14} {mark} "
@@ -277,13 +286,17 @@ def main() -> int:
                                  bnb_4bit_compute_dtype=torch.bfloat16,
                                  bnb_4bit_use_double_quant=True)
         base = AutoModelForCausalLM.from_pretrained(
-            args.base_model, quantization_config=bnb, device_map={"": "cuda"}, trust_remote_code=True)
+            args.base_model, quantization_config=bnb, device_map={"": "cuda"}, trust_remote_code=True,
+            attn_implementation="flash_attention_2")
     else:
         base = AutoModelForCausalLM.from_pretrained(
-            args.base_model, torch_dtype=torch.bfloat16, device_map="auto", trust_remote_code=True)
+            args.base_model, torch_dtype=torch.bfloat16, device_map="auto", trust_remote_code=True,
+            attn_implementation="flash_attention_2")
     if args.adapter:
         print(f"[06-eval-b] Loading LoRA adapter: {args.adapter}")
         model = PeftModel.from_pretrained(base, args.adapter)
+        print("[06-eval-b] Merging LoRA adapter into base for eval throughput")
+        model = model.merge_and_unload()
     else:
         print("[06-eval-b] BASE-ONLY mode (no adapter)")
         model = base
@@ -301,7 +314,8 @@ def main() -> int:
 
     if not args.skip_humaneval:
         ds = load_dataset("openai/openai_humaneval", split="test")
-        if args.he_limit: ds = ds.select(range(min(args.he_limit, len(ds))))
+        if args.he_limit:
+            ds = ds.select(range(min(args.he_limit, len(ds))))
         problems = list(ds)
         print(f"[06-eval-b] HumanEval+: {len(problems)} problems")
         results["humaneval"] = run_task_batched(
@@ -315,7 +329,8 @@ def main() -> int:
 
     if not args.skip_mbpp:
         ds = load_dataset("google-research-datasets/mbpp", split="test")
-        if args.mbpp_limit: ds = ds.select(range(min(args.mbpp_limit, len(ds))))
+        if args.mbpp_limit:
+            ds = ds.select(range(min(args.mbpp_limit, len(ds))))
         problems = list(ds)
         print(f"[06-eval-b] MBPP: {len(problems)} problems")
         results["mbpp"] = run_task_batched(
