@@ -116,3 +116,29 @@ Note `--batch-size 8` for eval (not 16) — chat-mode generation on 16B is heavi
 - HumanEval+ / MBPP+ extended evals (decide after #115 lands).
 - HF Hub upload (only if dHE ≥ +3).
 
+
+## Reframe (2026-05-08 03:00 UTC) — control experiment for recurrence
+
+CTD is the **enabler** for Mythic-RDT recurrence, not a competing product. The pipeline is:
+
+```
+DSC-V2-Lite-Instruct (base, HE 75.6)
+        │
+        ▼  ← CTD/SFT lift (M37c-style, this task #115)
+DSC-V2-Lite + CTD adapter (target HE 78-82)
+        │
+        ▼  ← Mythic-RDT recurrence wrap (T=2/4/8 sweep, separate task)
+Mythic-Coder T=8 (final product, target HE ≥ 80.6)
+```
+
+Each layer is additive and independently measurable:
+- **Base** = floor we cannot do worse than
+- **CTD adapter** (#115) = cheap LoRA SFT lift to harvest the gap to the QC-14B teacher
+- **Recurrence** = the research contribution; T=8 lift over T=1 (which equals the CTD checkpoint) is the clean measure of recurrence value
+
+This means the Mythic-Coder paper/release reports:
+- CTD lift Δ_CTD = HE(base + M37c) − HE(base)
+- Recurrence lift Δ_REC = HE(base + M37c, T=8) − HE(base + M37c, T=1)
+- Total = Δ_CTD + Δ_REC
+
+Each is independently attributable. Wrapping recurrence on a stronger starting checkpoint is the right pipeline ordering — never wrap recurrence around a weaker base when a stronger one is one cheap LoRA away.
