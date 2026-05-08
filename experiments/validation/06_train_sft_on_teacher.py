@@ -7,7 +7,7 @@ that bypasses token-level KL ceiling.
 Input JSONL: {prompt, teacher_completion, prompt_token_len}.
 """
 from __future__ import annotations
-import argparse, json, math, time, sys
+import argparse, json, math, time, sys, os
 from pathlib import Path
 import torch
 import torch.nn.functional as F
@@ -16,6 +16,13 @@ from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import LoraConfig, get_peft_model
+
+# Optional wandb integration. Activates when --wandb is passed (or WANDB_PROJECT env set).
+try:
+    import wandb
+    _WANDB_AVAILABLE = True
+except ImportError:
+    _WANDB_AVAILABLE = False
 
 
 class TeacherCompletionDataset(Dataset):
@@ -133,7 +140,26 @@ def main():
                         "epoch 1 full-loss SFT (absorb teacher chat-style/format), "
                         "epoch 2 masked SFT (refine logic without further style-drift). "
                         "M45 recipe.")
+    p.add_argument("--wandb", action="store_true",
+                   help="Enable Weights & Biases logging. Run name = output_dir basename. "
+                        "Project = $WANDB_PROJECT or 'cross-tokenizer-distill'.")
+    p.add_argument("--wandb-run-name", default=None,
+                   help="Override wandb run name (default: basename of --output-dir).")
     args = p.parse_args()
+
+    # Initialise wandb early so it captures config + watches the model later.
+    use_wandb = args.wandb and _WANDB_AVAILABLE
+    if args.wandb and not _WANDB_AVAILABLE:
+        print("[sft] WARNING: --wandb requested but `wandb` import failed. Continuing without.", flush=True)
+    if use_wandb:
+        run_name = args.wandb_run_name or Path(args.output_dir).name
+        wandb.init(
+            project=os.environ.get("WANDB_PROJECT", "cross-tokenizer-distill"),
+            name=run_name,
+            config=vars(args),
+            reinit=True,
+        )
+        print(f"[sft] wandb: project={os.environ.get('WANDB_PROJECT', 'cross-tokenizer-distill')} run={run_name}", flush=True)
 
     torch.manual_seed(args.seed)
     out = Path(args.output_dir); out.mkdir(parents=True, exist_ok=True)
@@ -233,8 +259,18 @@ def main():
                     # code-only mask. <0.20 means we're training on <20% of teacher tokens
                     # (council audit 2026-05-07: signal for "mask too aggressive → flat results").
                     density = (accum_n_valid / accum_n_unmasked) if accum_n_unmasked else 0.0
-                    print(f"[sft] step={opt_step}/{total_steps} loss={avg:.4f} lr={sched.get_last_lr()[0]:.2e} "
+                    cur_lr = sched.get_last_lr()[0]
+                    print(f"[sft] step={opt_step}/{total_steps} loss={avg:.4f} lr={cur_lr:.2e} "
                           f"mask_pos={n_valid} mask_density={density:.2f} {elapsed:.0f}s", flush=True)
+                    if use_wandb:
+                        wandb.log({
+                            "train/loss": avg,
+                            "train/lr": cur_lr,
+                            "train/mask_pos": n_valid,
+                            "train/mask_density": density,
+                            "train/epoch": epoch + 1,
+                            "train/elapsed_seconds": elapsed,
+                        }, step=opt_step)
                 accum_loss = 0.0
                 accum_n_valid = 0
                 accum_n_unmasked = 0
@@ -242,9 +278,13 @@ def main():
         ck = out / f"epoch-{epoch+1}"
         student.save_pretrained(ck)
         print(f"[sft] epoch {epoch+1} done, saved {ck}", flush=True)
+        if use_wandb:
+            wandb.log({"checkpoint/epoch": epoch + 1}, step=opt_step)
 
     student.save_pretrained(out)
     print(f"[sft] DONE. Final adapter -> {out}", flush=True)
+    if use_wandb:
+        wandb.finish()
 
 
 if __name__ == "__main__":
