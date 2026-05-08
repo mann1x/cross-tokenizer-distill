@@ -182,6 +182,16 @@ def main():
                         "instruction like 'You are a Python coding assistant. Reply "
                         "with code only.' to bias the student toward fence-only "
                         "completions.")
+    p.add_argument("--lora-target-modules", default="all-linear",
+                   help="LoRA target module spec. Default 'all-linear' = PEFT's "
+                        "auto-detect of every nn.Linear (matches M37/M115 baseline). "
+                        "Council 2026-05-08 recommended these alternatives for "
+                        "DSC-V2-Lite-MoE prior-conflict probes: "
+                        "(a) 'all-linear-no-gate' — exclude the MoE router gate "
+                        "to protect routing logic from style-shift; "
+                        "(b) custom comma-separated list of leaf-name substrings "
+                        "e.g. 'q_proj,kv_a_proj_with_mqa,kv_b_proj,o_proj' for MLA-"
+                        "only, 'up_proj,gate_proj,down_proj' for FFN/expert-only.")
     args = p.parse_args()
 
     # Initialise wandb early so it captures config + watches the model later.
@@ -213,7 +223,34 @@ def main():
     student = AutoModelForCausalLM.from_pretrained(args.student, torch_dtype=torch.bfloat16,
                                                     device_map={"": "cuda"}, trust_remote_code=True)
 
-    lora = LoraConfig(r=args.lora_rank, lora_alpha=args.lora_rank*2, target_modules="all-linear",
+    # target_modules: "all-linear" (default) OR a comma-separated list of substrings
+    # to match — useful for the council-recommended ablations on DSC-V2-Lite-MoE,
+    # where the default sweeps router gates + expert MLPs + MLA latent projections,
+    # any of which can be the source of "Prior Conflict" style-shift damage.
+    # Example: --lora-target-modules "q_proj,kv_a_proj_with_mqa,kv_b_proj,o_proj"
+    # for MLA-only; "up_proj,gate_proj,down_proj" for FFN-only;
+    # "all-linear-no-gate" for "all-linear minus the router gate".
+    if args.lora_target_modules == "all-linear":
+        target_modules = "all-linear"
+    elif args.lora_target_modules == "all-linear-no-gate":
+        # Enumerate all linear modules except the router `gate` (MoE routing
+        # head). We can't pass a callable to PEFT's target_modules in older
+        # versions, so we precompute the list of module names matching all
+        # nn.Linear children and drop any whose name contains '.gate.'
+        # or ends with '.gate'.
+        import re as _re
+        all_linear = [n for n, m in student.named_modules()
+                      if isinstance(m, torch.nn.Linear)]
+        target_modules = sorted({n.split(".")[-1] for n in all_linear
+                                 if not _re.search(r"(^|\.)gate$", n)})
+        # Drop common LM head suffix that PEFT auto-skips anyway.
+        target_modules = [t for t in target_modules if t != "lm_head"]
+        print(f"[sft] --lora-target-modules=all-linear-no-gate → "
+              f"target leaf names: {target_modules}", flush=True)
+    else:
+        target_modules = [s.strip() for s in args.lora_target_modules.split(",") if s.strip()]
+        print(f"[sft] --lora-target-modules custom: {target_modules}", flush=True)
+    lora = LoraConfig(r=args.lora_rank, lora_alpha=args.lora_rank*2, target_modules=target_modules,
                       bias="none", task_type="CAUSAL_LM")
     student = get_peft_model(student, lora)
     student.print_trainable_parameters()
