@@ -7,7 +7,11 @@ that bypasses token-level KL ceiling.
 Input JSONL: {prompt, teacher_completion, prompt_token_len}.
 """
 from __future__ import annotations
-import argparse, json, math, time, sys, os
+import argparse
+import json
+import math
+import os
+import time
 from pathlib import Path
 import torch
 import torch.nn.functional as F
@@ -27,7 +31,7 @@ except ImportError:
 
 class TeacherCompletionDataset(Dataset):
     def __init__(self, jsonl_path, tokenizer, max_prompt_len=384, max_total_len=512,
-                 code_only_mask=False):
+                 code_only_mask=False, chat_template=False, system_prompt=None):
         self.records = []
         with open(jsonl_path) as f:
             for line in f:
@@ -36,15 +40,33 @@ class TeacherCompletionDataset(Dataset):
         self.max_prompt_len = max_prompt_len
         self.max_total_len = max_total_len
         self.code_only_mask = code_only_mask
+        self.chat_template = chat_template
+        self.system_prompt = system_prompt
         if code_only_mask:
             import re as _re
             self._FENCE = _re.compile(r"```(?:python)?\s*\n(.*?)\n```", _re.DOTALL)
 
-    def __len__(self): return len(self.records)
+    def __len__(self):
+        return len(self.records)
+
+    def _wrap_prompt(self, raw):
+        """Apply student's chat template so train format matches eval --chat-template.
+        Returns the raw string when chat_template is off."""
+        if not self.chat_template:
+            return raw
+        msgs = []
+        if self.system_prompt:
+            msgs.append({"role": "system", "content": self.system_prompt})
+        msgs.append({"role": "user", "content": raw})
+        return self.tok.apply_chat_template(
+            msgs, tokenize=False, add_generation_prompt=True)
 
     def __getitem__(self, i):
         r = self.records[i]
-        prompt_ids = self.tok(r["prompt"], add_special_tokens=False, truncation=True,
+        wrapped_prompt = self._wrap_prompt(r["prompt"])
+        # add_special_tokens=False is correct in chat-template path too — the
+        # template already inlines BOS / role tokens; we don't want them duplicated.
+        prompt_ids = self.tok(wrapped_prompt, add_special_tokens=False, truncation=True,
                               max_length=self.max_prompt_len, return_tensors=None)["input_ids"]
         comp_text = r["teacher_completion"]
         if self.code_only_mask:
@@ -145,6 +167,21 @@ def main():
                         "Project = $WANDB_PROJECT or 'cross-tokenizer-distill'.")
     p.add_argument("--wandb-run-name", default=None,
                    help="Override wandb run name (default: basename of --output-dir).")
+    p.add_argument("--chat-template", action="store_true",
+                   help="Wrap each training prompt as a user message via "
+                        "tokenizer.apply_chat_template (matching the eval-time "
+                        "--chat-template behaviour in 06_eval_batched.py). "
+                        "REQUIRED for chat-tuned students like DSC-V2-Lite-Instruct, "
+                        "where the eval injects User:/Assistant: scaffolding. Without "
+                        "this, the trained model sees raw prompts at train time and "
+                        "chat-wrapped prompts at eval — distribution shift that costs "
+                        "HumanEval pass@1.")
+    p.add_argument("--system-prompt", default=None,
+                   help="Optional system message prepended via the chat template "
+                        "(only effective with --chat-template). Use a short coding "
+                        "instruction like 'You are a Python coding assistant. Reply "
+                        "with code only.' to bias the student toward fence-only "
+                        "completions.")
     args = p.parse_args()
 
     # Initialise wandb early so it captures config + watches the model later.
@@ -162,13 +199,15 @@ def main():
         print(f"[sft] wandb: project={os.environ.get('WANDB_PROJECT', 'cross-tokenizer-distill')} run={run_name}", flush=True)
 
     torch.manual_seed(args.seed)
-    out = Path(args.output_dir); out.mkdir(parents=True, exist_ok=True)
+    out = Path(args.output_dir)
+    out.mkdir(parents=True, exist_ok=True)
 
     print(f"[sft] student={args.student}", flush=True)
     # trust_remote_code=True: required for DS-Coder-V2-Lite (and other custom-modeling
     # checkpoints). DS-Coder-1.3B / Qwen2.5-Coder ignore the flag, so it's safe to default ON.
     tok = AutoTokenizer.from_pretrained(args.student, trust_remote_code=True)
-    if tok.pad_token is None: tok.pad_token = tok.eos_token
+    if tok.pad_token is None:
+        tok.pad_token = tok.eos_token
 
     print("[sft] loading student (bf16)...", flush=True)
     student = AutoModelForCausalLM.from_pretrained(args.student, torch_dtype=torch.bfloat16,
@@ -183,7 +222,18 @@ def main():
     # only activates from a later epoch). Cheap to build, lets the loop gate by epoch.
     ds = TeacherCompletionDataset(args.corpus, tok, max_prompt_len=args.max_prompt_len,
                                    max_total_len=args.max_total_len,
-                                   code_only_mask=args.code_only_mask)
+                                   code_only_mask=args.code_only_mask,
+                                   chat_template=args.chat_template,
+                                   system_prompt=args.system_prompt)
+    if args.chat_template:
+        # Sanity: render the first prompt so the operator sees the wrapped form
+        # in the launch log. Catches missing chat_template / wrong role wiring
+        # before training burns 30 min.
+        sample = ds._wrap_prompt(ds.records[0]["prompt"])
+        head = sample.replace("\n", "\\n")[:200]
+        print(f"[sft] --chat-template ON; first wrapped prompt (truncated 200): {head}", flush=True)
+        if args.system_prompt:
+            print(f"[sft] --system-prompt: {args.system_prompt[:120]}", flush=True)
     if args.code_only_mask:
         if args.code_only_mask_from_epoch <= 1:
             print("[sft] --code-only-mask: SFT loss restricted to python code-fence interiors (all epochs)", flush=True)
@@ -199,13 +249,16 @@ def main():
     trainable = [p_ for p_ in student.parameters() if p_.requires_grad]
     opt = AdamW(trainable, lr=args.lr, betas=(0.9, 0.95), weight_decay=0.0)
     def lr_lambda(step):
-        if step < args.warmup_steps: return step / max(1, args.warmup_steps)
+        if step < args.warmup_steps:
+            return step / max(1, args.warmup_steps)
         prog = (step - args.warmup_steps) / max(1, total_steps - args.warmup_steps)
         return 0.5 * (1.0 + math.cos(math.pi * prog))
     sched = LambdaLR(opt, lr_lambda)
 
     student.train()
-    step = 0; opt_step = 0; t_start = time.time()
+    step = 0
+    opt_step = 0
+    t_start = time.time()
     accum_loss = 0.0
     # Track mask-density (n_valid / n_unmasked-cont) per logging step. Council audit
     # 2026-05-07 flagged this as the missing diagnostic for distinguishing "mask too
@@ -249,7 +302,9 @@ def main():
 
             if step % args.grad_accum == 0:
                 torch.nn.utils.clip_grad_norm_(trainable, 1.0)
-                opt.step(); sched.step(); opt.zero_grad(set_to_none=True)
+                opt.step()
+                sched.step()
+                opt.zero_grad(set_to_none=True)
                 opt_step += 1
                 if opt_step % args.logging_steps == 0:
                     avg = accum_loss / args.grad_accum
