@@ -1,0 +1,719 @@
+{
+  "adapter": "runs/v2/M115_DSCV2LITE_M37c/epoch-2",
+  "cache_db": "results/full_sft/M115_DSCV2LITE_M37c_HE_MBPP.db",
+  "batch_size": 16,
+  "humaneval": {
+    "n_total": 164,
+    "n_pass": 117,
+    "pass@1": 0.7134146341463414,
+    "failures": [
+      {
+        "task_id": "HumanEval/10",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "HumanEval/100",
+        "info": "AssertionError: Test 3"
+      },
+      {
+        "task_id": "HumanEval/101",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "HumanEval/103",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "HumanEval/106",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "HumanEval/110",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "HumanEval/115",
+        "info": "NameError: name 'math' is not defined"
+      },
+      {
+        "task_id": "HumanEval/119",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "HumanEval/120",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "HumanEval/126",
+        "info": "AssertionError: This prints if this assert fails 7 (good for debugging!)"
+      },
+      {
+        "task_id": "HumanEval/127",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "HumanEval/129",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "HumanEval/130",
+        "info": "IndexError: list index out of range"
+      },
+      {
+        "task_id": "HumanEval/131",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "HumanEval/132",
+        "info": "AssertionError: This prints if this assert fails 1 (good for debugging!)"
+      },
+      {
+        "task_id": "HumanEval/134",
+        "info": "IndexError: string index out of range"
+      },
+      {
+        "task_id": "HumanEval/135",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "HumanEval/138",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "HumanEval/139",
+        "info": "AssertionError: Test 4"
+      },
+      {
+        "task_id": "HumanEval/140",
+        "info": "AssertionError: This prints if this assert fails 2 (good for debugging!)"
+      },
+      {
+        "task_id": "HumanEval/143",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "HumanEval/145",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "HumanEval/146",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "HumanEval/150",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "HumanEval/155",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "HumanEval/159",
+        "info": "AssertionError: Error"
+      },
+      {
+        "task_id": "HumanEval/160",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "HumanEval/163",
+        "info": "AssertionError: Test 1"
+      },
+      {
+        "task_id": "HumanEval/19",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "HumanEval/24",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "HumanEval/26",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "HumanEval/32",
+        "info": "ValueError: The list must have an odd number of coefficients and the largest non-zero coefficient must be positive."
+      },
+      {
+        "task_id": "HumanEval/33",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "HumanEval/38",
+        "info": "NameError: name 'encode_cyclic' is not defined"
+      },
+      {
+        "task_id": "HumanEval/39",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "HumanEval/50",
+        "info": "NameError: name 'encode_shift' is not defined"
+      },
+      {
+        "task_id": "HumanEval/54",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "HumanEval/65",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "HumanEval/75",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "HumanEval/77",
+        "info": "AssertionError: Fourth test error: False"
+      },
+      {
+        "task_id": "HumanEval/78",
+        "info": "AssertionError: Second test error: 3"
+      },
+      {
+        "task_id": "HumanEval/81",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "HumanEval/83",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "HumanEval/93",
+        "info": "AssertionError: This prints if this assert fails 1 (good for debugging!)"
+      },
+      {
+        "task_id": "HumanEval/94",
+        "info": "AssertionError: This prints if this assert fails 1 (good for debugging!)"
+      },
+      {
+        "task_id": "HumanEval/96",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "HumanEval/99",
+        "info": "AssertionError: Test 3"
+      }
+    ]
+  },
+  "mbpp": {
+    "n_total": 378,
+    "n_pass": 250,
+    "pass@1": 0.6613756613756614,
+    "failures": [
+      {
+        "task_id": "100",
+        "info": "NameError: name 'next_smallest_palindrome' is not defined"
+      },
+      {
+        "task_id": "101",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "107",
+        "info": "NameError: name 'count_Hexadecimal' is not defined"
+      },
+      {
+        "task_id": "108",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "110",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "111",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "112",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "114",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "122",
+        "info": "NameError: name 'smartNumber' is not defined"
+      },
+      {
+        "task_id": "123",
+        "info": "NameError: name 'amicable_numbers_sum' is not defined"
+      },
+      {
+        "task_id": "124",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "125",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "126",
+        "info": "TypeError: 'int' object is not iterable"
+      },
+      {
+        "task_id": "13",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "134",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "136",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "137",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "138",
+        "info": "NameError: name 'is_Sum_Of_Powers_Of_Two' is not defined"
+      },
+      {
+        "task_id": "139",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "140",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "143",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "146",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "148",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "149",
+        "info": "NameError: name 'longest_subseq_with_diff_one' is not defined"
+      },
+      {
+        "task_id": "15",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "151",
+        "info": "NameError: name 'is_coprime' is not defined"
+      },
+      {
+        "task_id": "155",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "158",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "159",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "16",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "160",
+        "info": "NameError: name 'solution' is not defined"
+      },
+      {
+        "task_id": "164",
+        "info": "NameError: name 'areEquivalent' is not defined"
+      },
+      {
+        "task_id": "175",
+        "info": "NameError: name 'is_valid_parenthese' is not defined"
+      },
+      {
+        "task_id": "177",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "180",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "182",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "188",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "190",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "194",
+        "info": "NameError: name 'octal_To_Decimal' is not defined"
+      },
+      {
+        "task_id": "198",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "199",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "20",
+        "info": "NameError: name 'is_woodall' is not defined"
+      },
+      {
+        "task_id": "205",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "209",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "21",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "211",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "216",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "217",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "218",
+        "info": "NameError: name 'min_Operations' is not defined"
+      },
+      {
+        "task_id": "219",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "22",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "223",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "225",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "228",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "229",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "233",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "235",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "236",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "237",
+        "info": "NameError: name 'check_occurences' is not defined"
+      },
+      {
+        "task_id": "239",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "243",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "244",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "254",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "26",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "264",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "267",
+        "info": "NameError: name 'square_Sum' is not defined"
+      },
+      {
+        "task_id": "275",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "276",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "277",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "286",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "288",
+        "info": "NameError: name 'modular_inverse' is not defined"
+      },
+      {
+        "task_id": "289",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "291",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "295",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "296",
+        "info": "NameError: name '_merge_sort' is not defined"
+      },
+      {
+        "task_id": "298",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "300",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "303",
+        "info": "NameError: name 'solve' is not defined"
+      },
+      {
+        "task_id": "304",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "306",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "307",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "31",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "310",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "311",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "312",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "313",
+        "info": "AssertionError: 2"
+      },
+      {
+        "task_id": "314",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "315",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "323",
+        "info": "NameError: name 'right_rotate' is not defined"
+      },
+      {
+        "task_id": "324",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "328",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "33",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "339",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "34",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "342",
+        "info": "IndexError: tuple index out of range"
+      },
+      {
+        "task_id": "347",
+        "info": "NameError: name 'count_Squares' is not defined"
+      },
+      {
+        "task_id": "348",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "350",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "354",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "364",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "367",
+        "info": "NameError: name 'is_tree_balanced' is not defined"
+      },
+      {
+        "task_id": "368",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "369",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "37",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "370",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "372",
+        "info": "NameError: name 'heap_assending' is not defined"
+      },
+      {
+        "task_id": "374",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "375",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "376",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "383",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "385",
+        "info": "NameError: name 'get_perrin' is not defined"
+      },
+      {
+        "task_id": "386",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "388",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "39",
+        "info": "NameError: name 'rearange_string' is not defined"
+      },
+      {
+        "task_id": "47",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "48",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "49",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "50",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "56",
+        "info": "NameError: name 'check' is not defined"
+      },
+      {
+        "task_id": "70",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "72",
+        "info": "NameError: name 'dif_Square' is not defined"
+      },
+      {
+        "task_id": "73",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "76",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "77",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "78",
+        "info": "NameError: name 'count_With_Odd_SetBits' is not defined"
+      },
+      {
+        "task_id": "81",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "87",
+        "info": "AssertionError: "
+      },
+      {
+        "task_id": "92",
+        "info": "AssertionError: "
+      }
+    ]
+  }
+}
